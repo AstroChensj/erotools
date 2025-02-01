@@ -1,0 +1,5 @@
+astropy
+numpy
+scipy
+pandas
+astropy_healpix

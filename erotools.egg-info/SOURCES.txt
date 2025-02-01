@@ -1,0 +1,16 @@
+setup.py
+erotools/SKYMAPS_052022_MPE.fits
+erotools/__init__.py
+erotools/detlike.py
+erotools/erocat.py
+erotools/eroecf.py
+erotools/onaxis_tm0_arf_filter_2023-01-17.fits.gz
+erotools/onaxis_tm0_rmf_2023-01-17.fits.gz
+erotools.egg-info/PKG-INFO
+erotools.egg-info/SOURCES.txt
+erotools.egg-info/dependency_links.txt
+erotools.egg-info/entry_points.txt
+erotools.egg-info/requires.txt
+erotools.egg-info/top_level.txt
+scripts/apetool_autoscript.py
+scripts/get_ero_skytile.py
