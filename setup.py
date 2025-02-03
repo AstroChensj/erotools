@@ -7,7 +7,7 @@ setup(
     author='Shi-Jiang Chen',
     author_email='JohnnyCsj666@gmail.com',
     #url='https://github.com/AstroChensj/Xstack.git',
-    packages=['erotools','scripts'],
+    packages=['erotools','erotools_scripts','examples'],
     install_requires=[
         'astropy',
         'numpy',
@@ -21,8 +21,8 @@ setup(
     package_data={'erotools': ["*.fits.gz",'*.fits']},
     entry_points={
         'console_scripts': [
-            'run_apetool = scripts.apetool_autoscript:main',
-            'get_ero_skytile = scripts.get_ero_skytile:main'
+            'run_apetool = erotools_scripts.apetool_autoscript:main',
+            'get_ero_skytile = erotols_scripts.get_ero_skytile:main'
         ]
     }
 )
