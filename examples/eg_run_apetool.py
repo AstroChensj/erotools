@@ -8,7 +8,7 @@ import glob
 import subprocess
 from joblib import Parallel, delayed
 from tqdm import tqdm
-from ero_tools.erocat import find_erode_skytile
+from erotools.erocat import find_erode_skytile
 
 
 filelst = sys.argv[1]
