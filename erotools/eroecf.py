@@ -11,7 +11,7 @@ default_RMF = os.path.join(os.path.dirname(__file__),'onaxis_tm0_rmf_2023-01-17.
 def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,xmodel="tbabs*powerlaw",xmodel_par={1:0.01,2:2.0,3:1},chatter=0,abund="wilm",lmod=None,xset=None):
     """
     Energy conversion factor (ECF) calculation, where ECF defined as: rate (Photons/s) / flux (erg/cm^2/s).
-    Assuming model for the conversion: TBabs*powerlaw
+    User should supply the spectral model.
 
     Parameters
     ----------
@@ -23,14 +23,18 @@ def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,xmodel="tbabs*powerlaw",x
         emin for flux calculation.
     emax_flux : float
         emax for flux calculation.
-    Gamma : float, optional
-        Powerlaw photon index. Defaults to 2.0.
-    logNH : float, optional
-        Logarithm of Galactic NH. Defaults to 0.
+    xmodel : str
+        XSPEC model for the calculation. Defaults to "TBabs*powerlaw".
+    xmodel_par : dict
+        Dictionary of model parameters. Defaults to {1:0.01,2:2.0,3:1}. Note that the key must be an integer.
     chatter : int, optional
         Chatter level in XSPEC. Defaults to 0 (no output information).
     abund : str, optional
         Abund in XSPEC. Defaults to "wilm".
+    lmod : dict, optional
+        XSPEC lmod command, must be a dict with package name as key and package directory as value.
+    xset : dict, optional
+        XSPEC xset command, must be a dict with key as command name and value as command value.
 
     Returns
     -------
@@ -51,24 +55,11 @@ def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,xmodel="tbabs*powerlaw",x
     if xset is not None:
         for key,val in xset.items():
             Xset.addModelString(key,val)
-    # xmodel = "TBabs*powerlaw"
     # set model
     AllModels.clear()
     m1 = Model(xmodel)
-
-    # m_vals = {}
-    # # initialize the component model
-    # for paridx,parval in xmodel_par.items():
-    #     paridx = int(paridx)    # the key must be an integer
-    #     # if isinstance(chain_idx,str) and len(chain_idx.split("__"))>1:   # e.g., PhoIndex__1
-    #     #     chain_val = chain_data[chain_idx][i]
-    #     # else:   # e.g., 0.01234 or "1 0.1 0.1 0.1 500 500"
-    #     # chain_val = chain_idx
-    #     m_vals[comp_idx] = chain_val
     m1.setPars(xmodel_par)
 
-    # m1.TBabs.nH.values = 10**logNH*1e-22
-    # m1.powerlaw.PhoIndex.values = Gamma
     AllData.clear()
     AllData.fakeit(1,FakeitSettings(response=default_RMF,arf=default_ARF,exposure=100),noWrite=True)
     AllData.ignore(f"0.-{emin_rate} {emax_rate}-**")
