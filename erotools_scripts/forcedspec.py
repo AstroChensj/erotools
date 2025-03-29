@@ -13,7 +13,7 @@ Output: SPEC, BKGSPEC, ARF, RMF.
 """
 import numpy as np
 from astropy.io import fits
-# from astropy.coordinates import search_around_sky, SkyCoord
+from astropy.coordinates import search_around_sky, SkyCoord
 import astropy.units as u
 import pandas as pd
 import subprocess
@@ -21,20 +21,8 @@ import sys
 import os
 import argparse
 import logging
+import time
 from erotools.erocat import find_erode_skytile,fake_srclist,search_catalog,look_for_confusion,create_aperture
-# from erotools.eroecf import get_eroecf
-# from erotools.detlike import cal_detlike,counts_twoside_poisson,counts_ul_poisson
-
-
-
-# define logger
-logger = logging.getLogger("forcedspec")
-logger.setLevel(logging.DEBUG)
-file_handler = logging.FileHandler("forcedspec.log")
-file_handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
 
 
 # define argparser
@@ -48,104 +36,242 @@ parser = HelpfulParser(description=__doc__,
 	epilog="""Shi-Jiang Chen, Johannes Buchner and Teng Liu (C) 2024 <JohnnyCsj666@gmail.com>""",
     formatter_class=argparse.RawDescriptionHelpFormatter)
 
-parser.add_argument("science_img",type=str,help="the input image/events file")
+parser.add_argument("science_evt",type=str,help="the input image/events file, from eRASS archive")
 parser.add_argument("target_ra",type=float,help="target source RA [degree, icrs]")
 parser.add_argument("target_dec",type=float,help="target source DEC [degree, icrs]")
-# parser.add_argument("--emin",type=float,default=0.2,help="rest-frame minimum energy [keV]")
-# parser.add_argument("--emax",type=float,default=2.3,help="rest-frame maximum energy [keV]")
-parser.add_argument("--target_z",type=float,default=0,help="target redshift (real photometry extracted from emin/z, emax/z)")
-parser.add_argument("--outdir",type=str,default="outdir",help="output directory name")
-parser.add_argument("--outname",type=str,default="result.fits",help="name of fits file storing the aperture photometry results, saved under outdir")
-parser.add_argument("--prefix",type=str,default="",help="prefix for all products")
-parser.add_argument("--suffix",type=str,default="",help="suffix for all products")
-parser.add_argument("--R_match",type=float,default=15,help="matching radius (arcsec) between target and dr1 catalog (recommend: 15)")
-parser.add_argument("--R_confusion",type=float,default=60,help="confusion radius (arcsec), where sources in annulus of R_match ~ R_confusion lead to confusion issues (recommend: 60)")
-parser.add_argument("--eRASS_CAT_DIR",type=str,default=None,help="overwrite environmental variable eRASS_CAT_DIR")
+parser.add_argument("--prefix",type=str,default="./out/forcedspec_",help="prefix for all products, defaults to './out/forcedspec_', will create a directory if necessary")
+parser.add_argument("--suffix",type=str,default="",help="suffix for all products, defaults to ''")
+parser.add_argument("--R_match",type=float,default=15,help="matching radius [arcsec] between target and dr1 catalog, defaults to 15 (recommended)")
+parser.add_argument("--R_confusion",type=float,default=60,help="confusion radius [arcsec], where sources in annulus of R_match ~ R_confusion lead to confusion issues, defaults to 60 (recommended)")
+parser.add_argument("--eRASS_CAT_DIR",type=str,default=None,help="overwrite environmental variable eRASS_CAT_DIR? Defaults to None")
+# parser.add_argument("--write_log",action="store_true",help="write output log?")
+parser.add_argument("--make_img",action="store_true",help="make image?")
 args = parser.parse_args()
 
 
-if args.eRASS_CAT_DIR is not None:
-	eRASS_CAT_DIR = args.eRASS_CAT_DIR
-else:
-	eRASS_CAT_DIR = os.environ.get("eRASS_CAT_DIR") # remember to set the eRASS_CAT_DIR environmental variable!
-main_cat = f"{eRASS_CAT_DIR}/eRASS1_Main.v1.1.fits"
-supp_cat = f"{eRASS_CAT_DIR}/eRASS1_Supp.v1.1.fits"
-if not (os.path.exists(main_cat) and os.path.exists(supp_cat)):
-	logger.error(f"{main_cat} or {supp_cat} does not exist!")
-	raise
+# make output directory if necessary
+outdir = os.path.dirname(args.prefix)
+os.makedirs(outdir,exist_ok=True)
+# make img_dir
+img_dir = f"{outdir}/image"
+os.makedirs(img_dir,exist_ok=True)
+# make log_dir
+log_dir = f"{outdir}/log"
+os.makedirs(log_dir,exist_ok=True)
 
 
+# define logger
+logger = logging.getLogger("forcedspec")
+logger.setLevel(logging.DEBUG)
+logname = f"{log_dir}/{os.path.basename(args.prefix)}forcedspec{args.suffix}.log"
+os.system(f"rm -rf {logname}")
+file_handler = logging.FileHandler(logname)
+file_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
-skytile = find_erode_skytile(args.ra,args.dec,radius=0)	# point search
-if skytile is None: # not in eRO-DE sky
-	logger.error(f"Target source (RA={args.target_ra}, DEC={args.target_dec}) not in eROSITA:DE sky!")
-	raise
 
-# generate a fake box list (in catprep standards)
-box_name = f"{args.outdir}/fake_srclist.fits"
-fake_srclist(args.target_ra,args.target_dec,box_name,args.science_img,skytile=skytile,style="cat")
+def main():
+	t0 = time.time()
+	# check if eRASS_CAT_DIR exists
+	logger.info("Checking if eRASS_CAT_DIR exists ...")
+	if args.eRASS_CAT_DIR is not None:
+		eRASS_CAT_DIR = args.eRASS_CAT_DIR
+	else:
+		eRASS_CAT_DIR = os.environ.get("eRASS_CAT_DIR") # remember to set the eRASS_CAT_DIR environmental variable!
+	main_cat = f"{eRASS_CAT_DIR}/eRASS1_Main.v1.1.fits"
+	supp_cat = f"{eRASS_CAT_DIR}/eRASS1_Supp.v1.1.fits"
+	if not (os.path.exists(main_cat) and os.path.exists(supp_cat)):
+		logger.error(f"{main_cat} or {supp_cat} does not exist!")
+		raise
 
 
+	# check if in eRO:DE sky
+	logger.info("Checking if in eROSITA:DE sky ...")
+	skytile = find_erode_skytile(args.target_ra,args.target_dec,radius=0)	# point search
+	if skytile is None: # not in eRO-DE sky
+		logger.error(f"Target source (RA={args.target_ra}, DEC={args.target_dec}) not in eROSITA:DE sky!")
+		raise
 
-# update the boxlist: add `AUTO_EXTRACT`, `AUTO_EXCLUDE` columns
-# find the closest match from eRASS1 MAIN+SUPP catalog
-entry = search_catalog(args.target_ra,args.target_dec,args.R_match)
-if entry is not None: # detection
-	id_target = entry["ID_SRC"]
-	with fits.open(box_name,mode="update") as hdu:
-		box = hdu[1]
-		ids = box.data["ID_SRC"]
-		auto_extract = np.array([1 if ids[i]==id_target else 0 for i in range(len(ids))])
-		auto_exclude = np.array([0 if ids[i]==id_target else 1 for i in range(len(ids))])
-		if "AUTO_EXTRACT" in box.columns.names:
-			box.columns.del_col("AUTO_EXTRACT")
-		if "AUTO_EXCLUDE" in box.columns.names:
-			box.columns.del_col("AUTO_EXCLUDE")
-		AUTO_EXTRACT = fits.Column(name="AUTO_EXTRACT",format="I",array=auto_extract)
-		AUTO_EXCLUDE = fits.Column(name="AUTO_EXCLUDE",format="I",array=auto_exclude)
-		box.data = fits.BinTableHDU.from_columns(box.columns+AUTO_EXTRACT+AUTO_EXCLUDE).data
-else:	# non-detection
-	subprocess.run([
-		"eroforcedphot",
-		f"{args.science_img}",
-        f"{args.target_ra}",
-        f"{args.target_dec}",
-        "--emin", "0.2",
-        "--emax", "2.3",
-        "--target_z", "0.",
-        "--outdir", f"{args.outdir}/forcedphot",
-		"--R_match", f"{args.R_match}",
-		"--R_confusion", f"{args.R_confusion}",
-	])
-	with fits.open(f"{args.outdir}/forcedphot/result.fits") as hdu:
-		forcedphot_data = hdu[1].data
-	ape_eef = forcedphot_data["APE_EEF"]
-	ape_radius = forcedphot_data["APE_RADIUS"] * 4 / 60	# 1 pixel = 4 arcsec; 1 arcsec = 1/60 arcmin
-	scts = forcedphot_data["ME"] / ape_eef	# posterior median counts, corrected for psf loss
-	bcts_arcmin = forcedphot_data["APE_BKG"] / (np.pi * ape_radius**2)	# bkg counts per arcmin^2
+
+	# generate a fake box list (in catprep standards)
+	box_name = f"{outdir}/fake_srclist.fits"
+	logger.info(f"Generating a fake box list ({box_name}) ...")
+	fakesrc_log = f"{log_dir}/{os.path.basename(args.prefix)}fakesrc{args.suffix}.log"
+	with open(fakesrc_log,"w") as log_file:
+		sys.stdout = log_file
+		sys.stderr = log_file
+		fake_srclist(args.target_ra,args.target_dec,box_name,args.science_evt,skytile=skytile,style="cat")
+		sys.stdout = sys.__stdout__
+		sys.stderr = sys.__stderr__
+
+
+	# update the boxlist: add `AUTO_EXTRACT`, `AUTO_EXCLUDE` columns
+	logger.info("Updating the boxlist with `AUTO_EXTRACT`, `AUTO_EXCLUDE` ...")
+	# find the closest match from eRASS1 MAIN+SUPP catalog
+	logger.info("Looking for closest match from eRASS1 MAIN+SUPP catalog ...")
+	entry = search_catalog(args.target_ra,args.target_dec,args.R_match)
+
+	if entry is not None: # detection
+		id_target = entry["ID_SRC"]
+		logger.info(f"Found. ID_SRC is {id_target}. Updating the boxlist ...")
+		with fits.open(box_name,mode="update") as hdu:
+			box = hdu[1]
+			ids = box.data["ID_SRC"]
+			auto_extract = np.array([1 if ids[i]==id_target else 0 for i in range(len(ids))])
+			auto_exclude = np.array([0 if ids[i]==id_target else 1 for i in range(len(ids))])
+			if "AUTO_EXTRACT" in box.columns.names:
+				box.columns.del_col("AUTO_EXTRACT")
+			if "AUTO_EXCLUDE" in box.columns.names:
+				box.columns.del_col("AUTO_EXCLUDE")
+			AUTO_EXTRACT = fits.Column(name="AUTO_EXTRACT",format="I",array=auto_extract)
+			AUTO_EXCLUDE = fits.Column(name="AUTO_EXCLUDE",format="I",array=auto_exclude)
+			box.data = fits.BinTableHDU.from_columns(box.columns+AUTO_EXTRACT+AUTO_EXCLUDE).data
 	
-	with fits.open(box_name,mode="updatee") as hdu:
-		box = hdu[1]
-		box_data = box.data
-		target_row = np.copy(box_data[0])
-		target_row["ID_SRC"] = "99999"	# for undetected source
-		target_row["RA"] = args.target_ra
-		target_row["RA_LOWERR"] = 3.72	# average value for eRASS1 MAIN catalog; doesn't matter here
-		target_row["RA_UPERR"] = 3.72
-		target_row["DEC"] = args.target_dec
-		target_row["DEC_LOWERR"] = 3.72
-		target_row["DEC_UPERR"] = 3.72
-		target_row["RADEC_ERR"] = 5.31
-		# target_row["LII"] = 
-		# target_row["BII"] = 
-		target_row["EXT"] = 0
-		target_row["EXT_ERR"] = 0
-		target_row["EXT_LOWERR"] = 0
-		target_row["EXT_UPERR"] = 0
-		target_row["EXT_LIKE"] = 0
-		target_row[""]
+	else:	# non-detection
+		logger.info("Non-detection. Running forced photometry first ...")
+		forcedphot_cmd = [
+			"eroforcedphot",
+			f"{args.science_evt}",
+			f"{args.target_ra}",
+			f"{args.target_dec}",
+			"--emin", "0.2",
+			"--emax", "2.3",
+			"--target_z", "0.",
+			"--outdir", f"{outdir}/forcedphot",
+			"--R_match", f"{args.R_match}",
+			"--R_confusion", f"{args.R_confusion}",
+		]
+		logger.info(" ".join(forcedphot_cmd))
+		forcedphot_log = f"{log_dir}/{os.path.basename(args.prefix)}forcedphot{args.suffix}.log"
+		with open(forcedphot_log,"w") as log_file:
+			subprocess.run(forcedphot_cmd,stdout=log_file)
+		logger.info("Done. ID_SRC will be 99999. Writing fake `ML_CTS_0`, `ML_BKG_0` ...")
 
-		
+		with fits.open(f"{outdir}/forcedphot/result.fits") as hdu:
+			forcedphot_data = hdu[1].data
+		ape_eef = forcedphot_data["APE_EEF"]
+		ape_radius = forcedphot_data["APE_RADIUS"] * 4 / 60	# 1 pixel = 4 arcsec; 1 arcsec = 1/60 arcmin
+		scts = forcedphot_data["ME"] / ape_eef	# posterior median counts, bkg subtracted, corrected for psf loss
+		scts_lo = forcedphot_data["LO"] / ape_eef
+		scts_hi = forcedphot_data["HI"] / ape_eef
+		bcts_arcmin = forcedphot_data["APE_BKG"] / (np.pi * ape_radius**2)	# bkg counts per arcmin^2
+		ape_exp = forcedphot_data["APE_EXP"]	# aperture exposure [s], vignetting corrected
+		cr_me = forcedphot_data["CR_ME"]	# source count rate, psf loss corrected, vignetting corrected
+		cr_lo = forcedphot_data["CR_LO"]
+		cr_hi = forcedphot_data["CR_HI"]
+		flux_me = forcedphot_data["FLUX_ME"]	# source flux, psf loss corrected, vignetting corrected
+		flux_lo = forcedphot_data["FLUX_LO"]
+		flux_hi = forcedphot_data["FLUX_HI"]
+		detlike = forcedphot_data["like"]
+		# convert ra, dec to lii, bii
+		coord = SkyCoord(ra=args.target_ra*u.degree,dec=args.target_dec*u.degree,frame="icrs")
+		galactic = coord.galactic
+		lii, bii = galactic.l.degree, galactic.b.degree
+		# append a new row to existing box list
+		with fits.open(box_name,mode="update") as hdu:
+			box_data = hdu[1].data
+			target_row = np.zeros(1,dtype=box_data.dtype)
+			target_row["ID_SRC"] = "99999"	# for undetected source
+			target_row["RA"] = args.target_ra
+			target_row["RA_LOWERR"] = 3.72	# average value for eRASS1 MAIN catalog; doesn't matter here
+			target_row["RA_UPERR"] = 3.72
+			target_row["DEC"] = args.target_dec
+			target_row["DEC_LOWERR"] = 3.72
+			target_row["DEC_UPERR"] = 3.72
+			target_row["RADEC_ERR"] = 5.31
+			target_row["LII"] = lii
+			target_row["BII"] = bii
+			target_row["EXT"] = 0
+			target_row["EXT_ERR"] = 0
+			target_row["EXT_LOWERR"] = 0
+			target_row["EXT_UPERR"] = 0
+			target_row["EXT_LIKE"] = 0
+			target_row["ML_CTS_0"] = scts
+			target_row["ML_CTS_ERR_0"] = scts_lo + scts_hi
+			target_row["ML_CTS_LOWERR_0"] = scts_lo
+			target_row["ML_CTS_UPERR_0"] = scts_hi
+			target_row["ML_RATE_0"] = cr_me		# actually not used; only to keep in catprep format
+			target_row["ML_RATE_ERR_0"] = cr_lo + cr_hi
+			target_row["ML_RATE_LOWERR_0"] = cr_lo
+			target_row["ML_RATE_UPERR_0"] = cr_hi
+			target_row["ML_FLUX_0"] = flux_me	# actually not used; only to keep in catprep format
+			target_row["ML_FLUX_ERR_0"] = flux_lo + flux_hi
+			target_row["ML_FLUX_LOWERR_0"] = flux_lo
+			target_row["ML_FLUX_UPERR_0"] = flux_hi
+			target_row["DET_LIKE_0"] = detlike
+			target_row["ML_BKG_0"] = bcts_arcmin	# bkg counts per acmin^2
+			target_row["ML_EXP_0"] = ape_exp
+			target_row["ML_EEF_0"] = ape_eef
+			box_data_updated = np.append(box_data,target_row)
+			hdu[1].data = box_data_updated
+		# and then add AUTO_EXTRACT, AUTO_EXCLUDE
+		logger.info("Updating boxlist ...")
+		with fits.open(box_name,mode="update") as hdu:
+			box = hdu[1]
+			ids = box.data["ID_SRC"]
+			id_target = 99999	# ids are integers, not str
+			auto_extract = np.array([1 if ids[i]==id_target else 0 for i in range(len(ids))])
+			auto_exclude = np.array([0 if ids[i]==id_target else 1 for i in range(len(ids))])
+			if "AUTO_EXTRACT" in box.columns.names:
+				box.columns.del_col("AUTO_EXTRACT")
+			if "AUTO_EXCLUDE" in box.columns.names:
+				box.columns.del_col("AUTO_EXCLUDE")
+			AUTO_EXTRACT = fits.Column(name="AUTO_EXTRACT",format="I",array=auto_extract)
+			AUTO_EXCLUDE = fits.Column(name="AUTO_EXCLUDE",format="I",array=auto_exclude)
+			box.data = fits.BinTableHDU.from_columns(box.columns+AUTO_EXTRACT+AUTO_EXCLUDE).data
+			
+	
+	# run srctool
+	logger.info("Running srctool ...")
+	outsrcreg = f"{img_dir}/{os.path.basename(args.prefix)}src{args.suffix}.reg"
+	outbackreg = f"{img_dir}/{os.path.basename(args.prefix)}bkg{args.suffix}.reg"
+	srctool_cmd = [
+		"srctool",
+		f"eventfiles={args.science_evt}",
+		f"srccoord={box_name}",
+		f"prefix={args.prefix}",
+		f"suffix={args.suffix}",
+		f"todo=SPEC ARF RMF",	# do not add "" !
+		f"insts=1 2 3 4 6",
+		f"srcreg=AUTO",
+		f"backreg=AUTO",
+		f"outsrcreg={outsrcreg}",
+		f"outbackreg={outbackreg}",
+		# f"tstep=0.05",
+		# f"xgrid=1.0 2.0",
+		f"clobber=yes",
+	]
+	logger.info(" ".join(srctool_cmd))
+	srctool_log = f"{log_dir}/{os.path.basename(args.prefix)}srctool{args.suffix}.log"
+	with open(srctool_log,"w") as log_file:
+		subprocess.run(srctool_cmd,stdout=log_file)
 
-	pass
+
+	# make image (optional)
+	if args.make_img:
+		science_img = f"{img_dir}/{os.path.basename(args.prefix)}image{args.suffix}.fits"
+		logger.info(f"Making image ({science_img}) ...")
+		img_cmd = [
+			"evtool",
+			f"eventfiles={args.science_evt}",
+			f"outfile={science_img}",
+			"image=yes",
+			"emin=0.2",
+			"emax=2.3",
+		]
+		logger.info(" ".join(img_cmd))
+		mkimg_log = f"{log_dir}/{os.path.basename(args.prefix)}mkimg{args.suffix}.log"
+		with open(mkimg_log,"w") as log_file:
+			subprocess.run(img_cmd,stdout=log_file)
+
+
+	t1 = time.time()
+	logger.info(f"Total time use: {t1-t0} s")
+
+
+
+if __name__ == "__main__":
+	main()
 

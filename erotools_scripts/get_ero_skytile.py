@@ -6,7 +6,7 @@ import requests
 import json
 import sys
 import argparse
-from ero_tools.erocat import find_erode_skytile
+from erotools.erocat import find_erode_skytile
 
 class HelpfulParser(argparse.ArgumentParser):
 	def error(self, message):
@@ -23,7 +23,7 @@ parser.add_argument('dec',type=str,help='source dec')
 parser.add_argument('--radius',type=str,default=0,help='match radius')
 
 args = parser.parse_args()
-    
+
 
 def main():
     skytile = find_erode_skytile(args.ra,args.dec,args.radius)

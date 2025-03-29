@@ -28,7 +28,7 @@ parser = HelpfulParser(description=__doc__,
 	epilog="""Shi-Jiang Chen, Johannes Buchner and Teng Liu (C) 2024 <JohnnyCsj666@gmail.com>""",
     formatter_class=argparse.RawDescriptionHelpFormatter)
 
-parser.add_argument("science_img",type=str,help="the input image/events file")
+parser.add_argument("science_evt",type=str,help="the input image/events file")
 parser.add_argument("target_ra",type=float,help="target source RA (degree, icrs)")
 parser.add_argument("target_dec",type=float,help="target source DEC (degree, icrs)")
 parser.add_argument("--emin",type=float,default=0.2,help="rest-frame minimum energy [keV]")
@@ -79,7 +79,7 @@ def main():
     os.system("rm -rf %s/%s"%(args.outdir,events))          # clobber=yes
     subprocess.run([
         "evtool",
-        "eventfiles=%s"%(args.science_img),
+        "eventfiles=%s"%(args.science_evt),
         "outfile=%s/%s"%(args.outdir,events),
         "image=yes",
         "emin=%f"%(obs_emin),

@@ -5,19 +5,22 @@ import astropy.units as u
 from astropy.wcs import WCS
 from astropy_healpix import HEALPix
 import requests
+import os
+eRASS_CAT_DIR = os.environ.get("eRASS_CAT_DIR") # remember to set the eRASS_CAT_DIR environmental variable!
+# /data/chensj/eROSITA/catalogs
 
 #############################################
 ########## CATALOG & SCIENCE IMAGE ##########
 #############################################
-main_cat = '/data/chensj/eROSITA/catalogs/eRASS1_Main.v1.1.fits'
-supp_cat = '/data/chensj/eROSITA/catalogs/eRASS1_Supp.v1.1.fits'
-main_cat_5 = '/data/chensj/eROSITA/catalogs/all_s4_s5_SourceCat1B_c030_240905_poscorr_mpe_photom.fits'
+main_cat = f"{eRASS_CAT_DIR}/eRASS1_Main.v1.1.fits"
+supp_cat = f"{eRASS_CAT_DIR}/eRASS1_Supp.v1.1.fits"
+main_cat_5 = f"{eRASS_CAT_DIR}/all_s4_s5_SourceCat1B_c030_240905_poscorr_mpe_photom.fits"
 
 
 #############################################
 ############## MAIN FUNCTIONS ###############
 #############################################
-def fake_boxlist(target_ra,target_dec,outname,science_img):
+def fake_srclist(target_ra,target_dec,outname,science_img,skytile=None,style="box"):
     """
     Look for a target in eRASS1 Main+Supp catalogs, and generte a `boxlist` for all detected sources in the skytile where it belongs to.
 
@@ -27,6 +30,8 @@ def fake_boxlist(target_ra,target_dec,outname,science_img):
     target_dec : float
     outname : str
     science_img : str
+    style : str, optional
+        Output catalog in `erbox` format (`box`) or `catprep` format (`cat`).
 
     Returns
     -------
@@ -38,37 +43,42 @@ def fake_boxlist(target_ra,target_dec,outname,science_img):
         supp_data = hdu[1].data
     data = np.append(main_data,supp_data)
 
-    skytile = find_erode_skytile(target_ra,target_dec)
+    if skytile is None: # if user prefer not to provide skytile, we look for it ourselves
+        skytile = find_erode_skytile(target_ra,target_dec)
 
-    if skytile is not None:
+    if skytile is not None: # if target lies in eRO-DE sky
         skytile = int(skytile)  # to match catalog standard
-        data_inskytile = data[data['SKYTILE']==skytile]
+        data_inskytile = data[data["SKYTILE"]==skytile]
         print("********************** Creating boxlist ***********************")
         # get wcs
         with fits.open(science_img) as hdu:
-            img_head = hdu[0].header  # Use the primary HDU or the appropriate extension
-            evt_head = hdu[1].header
-            wcs = WCS(img_head)
+            img_head = hdu[0].header    # naxis=1 here, don't use
+            evt_head = hdu[1].header    # naxis=2 here, use this one
+            wcs = WCS(evt_head)
         # get hdu[1].header
         excluded_keys = [
-            'XTENSION','BITPIX','NAXIS','NAXIS1','NAXIS2','PCOUNT','GCOUNT','TFIELDS','TTYPE','TFORM','TUNIT','EXTNAME',
-            'TSCAL','TZERO' # this two header keyword will change column values! 
+            "XTENSION","BITPIX","NAXIS","NAXIS1","NAXIS2","PCOUNT","GCOUNT","TFIELDS","TTYPE","TFORM","TUNIT","EXTNAME",
+            "TSCAL","TZERO" # this two header keyword will change column values! 
         ]
         science_head = fits.Header({
             key: value for key,value in evt_head.items()
             if not any(key.startswith(prefix) for prefix in excluded_keys)
         })
         # id
-        id_src_inskytile = data_inskytile['ID_SRC']
+        id_src_inskytile = data_inskytile["ID_SRC"]
         id_band_inskytile = np.ones(len(id_src_inskytile))
         id_inst_inskytile = np.zeros(len(id_src_inskytile))
         dist_nn_inskytile = np.zeros(len(id_src_inskytile)) # set to 0 for the moment
         # coordinates
-        ra_inskytile = data_inskytile['RA']
-        raerr_inskytile = (data_inskytile['RA_LOWERR'] + data_inskytile['RA_UPERR']) / 2 / 3600     # LOWERR, UPERR in units of arcsec
-        dec_inskytile = data_inskytile['DEC']
-        decerr_inskytile = (data_inskytile['DEC_LOWERR'] + data_inskytile['DEC_UPERR']) / 2 / 3600
-        radec_err_inskytile = data_inskytile['RADEC_ERR']
+        ra_inskytile = data_inskytile["RA"]
+        ralo_inskytile = data_inskytile["RA_LOWERR"]    # in units of arcsec
+        rahi_inskytile = data_inskytile["RA_UPERR"]     # in units of arcsec
+        raerr_inskytile = (ralo_inskytile + rahi_inskytile) / 2 / 3600  # in units of degree, for later use in wcs error propagation
+        dec_inskytile = data_inskytile["DEC"]
+        declo_inskytile = data_inskytile["DEC_LOWERR"]
+        dechi_inskytile = data_inskytile["DEC_UPERR"]
+        decerr_inskytile = (declo_inskytile + dechi_inskytile) / 2 / 3600   # in units of degree
+        radec_err_inskytile = data_inskytile["RADEC_ERR"]
         x_ima_inskytile,y_ima_inskytile = wcs.all_world2pix(ra_inskytile,dec_inskytile,1)  # image pixel starts with 1
         x1,y1 = wcs.all_world2pix(ra_inskytile+raerr_inskytile,dec_inskytile,1)
         x2,y2 = wcs.all_world2pix(ra_inskytile,dec_inskytile+decerr_inskytile,1)
@@ -78,60 +88,106 @@ def fake_boxlist(target_ra,target_dec,outname,science_img):
         pypra_dra = y1 - y_ima_inskytile    # partial(y)/partial(ra) * d ra
         pypdec_ddec = y2 - y_ima_inskytile  # partial(y)/partial(dec) * d dec
         y_ima_err_inskytile = np.sqrt(pypra_dra**2+pypdec_ddec**2)
-        lII_inskytile = data_inskytile['LII']
-        bII_inskytile = data_inskytile['BII']
+        lII_inskytile = data_inskytile["LII"]
+        bII_inskytile = data_inskytile["BII"]
         # counts, rate, flux
-        like_inskytile = data_inskytile['DET_LIKE_0']
-        scts_inskytile = data_inskytile['ML_CTS_1']
-        scts_err_inskytile = data_inskytile['ML_CTS_ERR_1']
+        like_inskytile = data_inskytile["DET_LIKE_0"]
+        scts_inskytile = data_inskytile["ML_CTS_1"]
+        scts_err_inskytile = data_inskytile["ML_CTS_ERR_1"]
+        sctslo_inskytile = data_inskytile["ML_CTS_LOWERR_1"]
+        sctshi_inskytile = data_inskytile["ML_CTS_UPERR_1"]
         box_cts_inskytile = scts_inskytile
-        bg_map_inskytile = data_inskytile['ML_BKG_1']
-        bg_raw_inskytile = data_inskytile['ML_BKG_1']
-        flux_inskytile = data_inskytile['ML_FLUX_1']
-        flux_err_inskytile = data_inskytile['ML_FLUX_ERR_1']
-        rate_inskytile = data_inskytile['ML_RATE_1']
-        rate_err_inskytile = data_inskytile['ML_RATE_ERR_1']
-        exp_map_inskytile = data_inskytile['ML_EXP_1']
+        bg_map_inskytile = data_inskytile["ML_BKG_1"]
+        bg_raw_inskytile = data_inskytile["ML_BKG_1"]
+        flux_inskytile = data_inskytile["ML_FLUX_1"]
+        flux_err_inskytile = data_inskytile["ML_FLUX_ERR_1"]
+        fluxlo_inskytile = data_inskytile["ML_FLUX_LOWERR_1"]
+        fluxhi_inskytile = data_inskytile["ML_FLUX_UPERR_1"]
+        rate_inskytile = data_inskytile["ML_RATE_1"]
+        rate_err_inskytile = data_inskytile["ML_RATE_ERR_1"]
+        ratelo_inskytile = data_inskytile["ML_RATE_LOWERR_1"]
+        ratehi_inskytile = data_inskytile["ML_RATE_UPERR_1"]
+        exp_map_inskytile = data_inskytile["ML_EXP_1"]
         box_size_inskytile = 4*np.ones(len(id_src_inskytile))   # assumes boxsize of 4 as recommended
-        eef_inskytile = data_inskytile['ML_EEF_1']
+        eef_inskytile = data_inskytile["ML_EEF_1"]
+        # ext
+        ext_inskytile = data_inskytile["EXT"]
+        exterr_inskytile = data_inskytile["EXT_ERR"]
+        extlo_inskytile = data_inskytile["EXT_LOWERR"]
+        exthi_inskytile = data_inskytile["EXT_UPERR"]
+        extlike_inskytile = data_inskytile["EXT_LIKE"]
+
         # make fits file
-        arrays = [
-            id_src_inskytile,id_inst_inskytile,id_band_inskytile,
-            scts_inskytile,scts_err_inskytile,box_cts_inskytile,
-            x_ima_inskytile,x_ima_err_inskytile,y_ima_inskytile,y_ima_err_inskytile,
-            like_inskytile,bg_map_inskytile,bg_raw_inskytile,exp_map_inskytile,
-            flux_inskytile,flux_err_inskytile,rate_inskytile,rate_err_inskytile,
-            ra_inskytile,dec_inskytile,radec_err_inskytile,lII_inskytile,bII_inskytile,
-            box_size_inskytile,eef_inskytile,dist_nn_inskytile
-        ]
-        colnames = [
-            'id_src','id_inst','id_band',
-            'scts','scts_err','box_cts',
-            'x_ima','x_ima_err','y_ima','y_ima_err',
-            'like','bg_map','bg_raw','exp_map',
-            'flux','flux_err','rate','rate_err',
-            'ra','dec','radec_err','lII','bII',
-            'box_size','eef','dist_nn'
-        ]
-        formats = [
-            '1J','1J','1J',
-            '1E','1E','1E',
-            '1E','1E','1E','1E',
-            '1E','1E','1E','1E',
-            '1E','1E','1E','1E',
-            '1E','1E','1E','1E','1E',
-            '1J','1E','1E'
-        ]
-        ## add a fake row with id_inst=1; without it ermldet cannot allocate memory to `tmplist` and likely raise an error (0x42d645,ermldet_in,line 630)
-        arrays = [np.append(arr[0],arr) for arr in arrays]
-        arrays[1][0] = 1
+        if style == "box":
+            arrays = [
+                id_src_inskytile,id_inst_inskytile,id_band_inskytile,
+                scts_inskytile,scts_err_inskytile,box_cts_inskytile,
+                x_ima_inskytile,x_ima_err_inskytile,y_ima_inskytile,y_ima_err_inskytile,
+                like_inskytile,bg_map_inskytile,bg_raw_inskytile,exp_map_inskytile,
+                flux_inskytile,flux_err_inskytile,rate_inskytile,rate_err_inskytile,
+                ra_inskytile,dec_inskytile,radec_err_inskytile,lII_inskytile,bII_inskytile,
+                box_size_inskytile,eef_inskytile,dist_nn_inskytile
+            ]
+            colnames = [
+                "id_src","id_inst","id_band",
+                "scts","scts_err","box_cts",
+                "x_ima","x_ima_err","y_ima","y_ima_err",
+                "like","bg_map","bg_raw","exp_map",
+                "flux","flux_err","rate","rate_err",
+                "ra","dec","radec_err","lII","bII",
+                "box_size","eef","dist_nn"
+            ]
+            formats = [
+                "1J","1J","1J",
+                "1E","1E","1E",
+                "1E","1E","1E","1E",
+                "1E","1E","1E","1E",
+                "1E","1E","1E","1E",
+                "1E","1E","1E","1E","1E",
+                "1J","1E","1E"
+            ]
+            ## add a fake row with id_inst=1; without it ermldet cannot allocate memory to `tmplist` and likely raise an error (0x42d645,ermldet_in,line 630)
+            arrays = [np.append(arr[0],arr) for arr in arrays]
+            arrays[1][0] = 1
+
+        elif style == "cat":
+            arrays = [
+                id_src_inskytile,
+                ra_inskytile,ralo_inskytile,rahi_inskytile,dec_inskytile,declo_inskytile,dechi_inskytile,radec_err_inskytile,lII_inskytile,bII_inskytile,
+                ext_inskytile,exterr_inskytile,extlo_inskytile,exthi_inskytile,extlike_inskytile,
+                scts_inskytile,scts_err_inskytile,sctslo_inskytile,sctshi_inskytile,
+                rate_inskytile,rate_err_inskytile,ratelo_inskytile,ratehi_inskytile,
+                flux_inskytile,flux_err_inskytile,fluxlo_inskytile,fluxhi_inskytile,
+                like_inskytile,bg_map_inskytile,exp_map_inskytile,eef_inskytile,
+            ]
+            colnames = [
+                "ID_SRC",
+                "RA","RA_LOWERR","RA_UPERR","DEC","DEC_LOWERR","DEC_UPERR","RADEC_ERR","LII","BII",
+                "EXT","EXT_ERR","EXT_LOWERR","EXT_UPERR","EXT_LIKE",
+                "ML_CTS_0","ML_CTS_ERR_0","ML_CTS_LOWERR_0","ML_CTS_UPERR_0",
+                "ML_RATE_0","ML_RATE_ERR_0","ML_RATE_LOWERR_0","ML_RATE_UPERR_0",
+                "ML_FLUX_0","ML_FLUX_ERR_0","ML_FLUX_LOWERR_0","ML_FLUX_UPERR_0",
+                "DET_LIKE_0","ML_BKG_0","ML_EXP_0","ML_EEF_0",
+            ]
+            formats = [
+                "1J",
+                "1E","1E","1E","1E","1E","1E","1E","1E","1E",
+                "1E","1E","1E","1E","1E",
+                "1E","1E","1E","1E",
+                "1E","1E","1E","1E",
+                "1E","1E","1E","1E",
+                "1E","1E","1E","1E",
+            ]
+        else:
+            raise Exception("Allowed `style` is `box` or `cat` !")
+        
         
         hdu_lst = fits.HDUList()
         hdu_primary = fits.PrimaryHDU()
         hdu_lst.append(hdu_primary)
 
         columns = [fits.Column(name=colname_,format=format_,array=array_) for colname_,format_,array_ in zip(colnames,formats,arrays)]
-        hdu_data = fits.BinTableHDU.from_columns(columns,name='SRCLIST')
+        hdu_data = fits.BinTableHDU.from_columns(columns,name="SRCLIST")
         # copy the header from science_image here
         for key,value in science_head.items():
             hdu_data.header[key] = value
@@ -139,19 +195,19 @@ def fake_boxlist(target_ra,target_dec,outname,science_img):
 
         hdu_lst.writeto(outname,overwrite=True)
 
-    else:
-        raise Exception('Target source not in eROSITA:DE sky. Aperture photometry cannot be proceeded.')
+    else:   # if not in eRO-DE sky
+        raise Exception("Target source not in eROSITA:DE sky. Aperture photometry cannot be proceeded.")
     
     return
 
 
-def look_for_confusion(target_ra,target_dec,R_match=15*u.arcsec,R_confusion=60*u.arcsec,cat_ra='RA',cat_dec='DEC'):
+def look_for_confusion(target_ra,target_dec,R_match=15*u.arcsec,R_confusion=60*u.arcsec,cat_ra="RA",cat_dec="DEC"):
     """
     Check if there are source confusion issues.
 
     Around the target position, we are interested in two regions: 
     - (Region I) The circle of with radius of `R_match`, within which we find our target source in the catalog. For eROSITA `R_match` can be chosen as 15'' (following Merloni+24). 
-    - (Region II) The annulus with inner radius of `R_match` and outer radius of `R_confusion`. Sources in this region are not associated with our target. But their PSF wings can extend to the source extraction radius (typically 75% EEF, or ~30''), leading to source confusion issues. eROSITA's HEW is ~30'', so a typical value for `R_confusion` can be 60''.
+    - (Region II) The annulus with inner radius of `R_match` and outer radius of `R_confusion`. Sources in this region are not associated with our target. But their PSF wings can extend to the source extraction radius (typically 75% EEF, or ~30''), leading to source confusion issues. eROSITA"s HEW is ~30'', so a typical value for `R_confusion` can be 60''.
 
     Number of source in this Region I should ideally be 1. It doesn't matter if =0 (non detection). >1 means target source lying in very dense regions, which is problematic and current code cannot treat it.  
 
@@ -166,8 +222,8 @@ def look_for_confusion(target_ra,target_dec,R_match=15*u.arcsec,R_confusion=60*u
     with fits.open(supp_cat) as hdu:
         supp_data = hdu[1].data
     data = np.append(main_data,supp_data)
-    cat = SkyCoord(data[cat_ra],data[cat_dec],unit='deg',frame='icrs')
-    target = SkyCoord([target_ra],[target_dec],unit='deg',frame='icrs')
+    cat = SkyCoord(data[cat_ra],data[cat_dec],unit="deg",frame="icrs")
+    target = SkyCoord([target_ra],[target_dec],unit="deg",frame="icrs")
 
     print("****** Looking for nearby sources in MAIN+SUPP catalog ********")
     result_in = search_around_sky(target,cat,R_match)
@@ -196,7 +252,7 @@ def look_for_confusion(target_ra,target_dec,R_match=15*u.arcsec,R_confusion=60*u
     return n_confusion
 
 
-def create_aperture(RA,DEC,RE=0.75,RR=0.75,outname='fake_ape.fits'):
+def create_aperture(RA,DEC,RE=0.75,RR=0.75,outname="fake_ape.fits"):
     """
     Create a apelist file as input for apetool.
 
@@ -219,11 +275,11 @@ def create_aperture(RA,DEC,RE=0.75,RR=0.75,outname='fake_ape.fits'):
         RE = [RE]
     if isinstance(RR,(int,float)):
         RR = [RR]
-    colnames = ['RA','DEC','RE','RR']
+    colnames = ["RA","DEC","RE","RR"]
     arrays = [RA,DEC,RE,RR]
-    formats = ['1E','1E','1E','1E']
+    formats = ["1E","1E","1E","1E"]
     columns = [fits.Column(name=colname_,format=format_,array=array_) for colname_,format_,array_ in zip(colnames,formats,arrays)]
-    hdu_data = fits.BinTableHDU.from_columns(columns,name='SRCLIST')
+    hdu_data = fits.BinTableHDU.from_columns(columns,name="SRCLIST")
     hdu_lst.append(hdu_data)
 
     hdu_lst.writeto(outname,overwrite=True)
@@ -248,7 +304,7 @@ def find_erode_skytile(ra,dec,radius=0):
 
     Returns
     -------
-    The resulting skytile.
+    The resulting skytile (None if not found).
     """
     # Construct the API URL
     base_url = "https://erosita.mpe.mpg.de/dr1/erodat/skyview/skytile_search_api/"
@@ -263,9 +319,9 @@ def find_erode_skytile(ra,dec,radius=0):
         if "tiles" in data:
             de_sky = data["tiles"][0]["de_sky"]
             if de_sky:
-                return '{:06d}'.format(data["tiles"][0]["srvmap"])
+                return f"{data['tiles'][0]['srvmap']:06d}"
             else:
-                print('Target source not in eROSITA:DE sky!')
+                print("Target source not in eROSITA:DE sky!")
                 return None
         else:
             print("No tiles found for the given position and radius.")
@@ -275,50 +331,86 @@ def find_erode_skytile(ra,dec,radius=0):
         return None
     
 
-def erass_flux(ra_target,dec_target,radius=10*u.arcsec,cat='erass1',band='1'):
-    '''
+def search_catalog(target_ra,target_dec,match_radius=15):
+    """
+    Search for target in eRASS1 MAIN+SUPP catalog.
+
+    Parameters
+    ----------
+    target_ra : float
+        Target ra in units of deg.
+    target_dec : float
+        Target dec in units of deg.
+    match_radius : float, optional
+        Match radius in units of arcsec. Defaults to 15.
+
+    Returns
+    -------
+    entry : numpy.ndarray
+        The (closest) target entry from eRASS1 MAIN+SUPP catalog. If target is not detected from MAIN+SUPP catalog, will return None instead.
+    """
+    with fits.open(main_cat) as hdu:
+        main_data = hdu[1].data
+    with fits.open(supp_cat) as hdu:
+        supp_data = hdu[1].data
+    data = np.append(main_data,supp_data)
+    cat = SkyCoord(data["RA"],data["DEC"],unit="deg",frame="icrs")	# these are all X-ray positions
+    target = SkyCoord([target_ra],[target_dec],unit="deg",frame="icrs")	# these are likely optical positions (from SDSS, for example)
+    results = search_around_sky(target,cat,match_radius*u.arcsec)
+    dist = results[2]
+    if len(dist) > 0:	# detection in eRASS1 MAIN+SUPP catalog
+        # find the closest one
+        idx_target = results[1][np.argsort(dist.value)[0]]
+        entry = data[idx_target]
+        return entry
+    else:	# non-detection in eRASS1 MAIN+SUPP catalog
+        return None
+    
+
+def erass_flux(ra_target,dec_target,radius=10*u.arcsec,cat="erass1",band="1"):
+    """
     Get source flux from eRASS1 or eRASS:5 catalog.
-    '''
-    if cat == 'erass1':
+    """
+    if cat == "erass1":
         fits_name = main_cat
-    elif cat == 'erass:5':
+    elif cat == "erass:5":
         fits_name = main_cat_5
     else:
-        raise Exception('Available catalog: `erass1` or `erass:5` !')
+        raise Exception("Available catalog: `erass1` or `erass:5` !")
     with fits.open(fits_name) as hdu:
         data = hdu[1].data
-    cat = SkyCoord(ra=data['RA'],dec=data['DEC'],unit='deg',frame='icrs')
-    target = SkyCoord(ra=[ra_target],dec=[dec_target],unit='deg',frame='icrs')
+    cat = SkyCoord(ra=data["RA"],dec=data["DEC"],unit="deg",frame="icrs")
+    target = SkyCoord(ra=[ra_target],dec=[dec_target],unit="deg",frame="icrs")
     result = search_around_sky(target,cat,radius)
     if len(result[1]) == 0:
-        print('Target source NONDET in catalog.')
+        print("Target source NONDET in catalog.")
         return None,None,None
     idx = result[1]
     sep = result[2].arcsec # separation in arcsec
-    flux_name = 'ML_FLUX_'+band
-    expo_name = 'ML_EXP_'+band
+    flux_name = "ML_FLUX_"+band
+    expo_name = "ML_EXP_"+band
     flux = data[idx][flux_name][0]
     expo = data[idx][expo_name][0]
     return flux,expo,sep
 
 
-def erass1_upperlimit(ra,dec,band='024'):
-    '''
+def erass1_upperlimit(ra,dec,band="024"):
+    """
     Get source flux upper limit from eRASS1 UpperLimit server.
-    '''
-    hpix = HEALPix(nside=2**16,order='nested',frame='icrs')
-    coord = SkyCoord(ra,dec,unit='deg',frame='icrs')
+    """
+    hpix = HEALPix(nside=2**16,order="nested",frame="icrs")
+    coord = SkyCoord(ra,dec,unit="deg",frame="icrs")
     hpidx = hpix.skycoord_to_healpix(coord)
-    url = f'https://sciserver.mpe.mpg.de/erosita-ul/ULbyHP/{band}/{hpidx}'
+    url = f"https://sciserver.mpe.mpg.de/erosita-ul/ULbyHP/{band}/{hpidx}"
     req = requests.get(url)
     assert req.status_code == 200
     if len(req.json()[band]) == 0:
-        print('Target source not in eROSITA:DE sky!')
+        print("Target source not in eROSITA:DE sky!")
         return None,None,None
     else:
-        expo = req.json()[band][0]['Exposure']
-        ul_b = req.json()[band][0]['UL_B']
-        ul_s = req.json()[band][0]['UL_S']
+        expo = req.json()[band][0]["Exposure"]
+        ul_b = req.json()[band][0]["UL_B"]
+        ul_s = req.json()[band][0]["UL_S"]
         return expo,ul_b,ul_s
 
 
@@ -348,9 +440,9 @@ def erass1_upperlimit(ra,dec,band='024'):
 #     if idx is not None:
 #         with fits.open(main_cat) as hdu:
 #             data = hdu[1].data
-#         skytile = data['SKYTILE'][idx]
-#         srcid = data['ID_SRC'][idx]
-#         data_inskytile = data[data['SKYTILE']==skytile]
+#         skytile = data["SKYTILE"][idx]
+#         srcid = data["ID_SRC"][idx]
+#         data_inskytile = data[data["SKYTILE"]==skytile]
 #         print("Target source located in skytile %06d, consisting of %d sources. Target source id: %05d."%(skytile,len(data_inskytile),srcid))
 #         # create sub-catalog in target skytile
 #         print("********************** Creating boxlist ***********************")
@@ -362,12 +454,12 @@ def erass1_upperlimit(ra,dec,band='024'):
 #         if idx is not None:
 #             with fits.open(supp_cat) as hdu:
 #                 supp_data = hdu[1].data
-#             skytile = supp_data['SKYTILE'][idx]
-#             srcid = supp_data['SKYTILE'][idx]
-#             supp_data_inskytile = supp_data[supp_data['SKYTILE']==skytile]
+#             skytile = supp_data["SKYTILE"][idx]
+#             srcid = supp_data["SKYTILE"][idx]
+#             supp_data_inskytile = supp_data[supp_data["SKYTILE"]==skytile]
 #             with fits.open(main_cat) as hdu:
 #                 main_data = hdu[1].data
-#             main_data_inskytile = main_data[main_data['SKYTILE']==skytile]
+#             main_data_inskytile = main_data[main_data["SKYTILE"]==skytile]
 #             data_inskytile = np.append(main_data_inskytile,supp_data_inskytile) # concatenate main+supp catalog
 #             print("Target source located in skytile %06d, consisting of %d sources. Target source id: %05d."%(skytile,len(data_inskytile),srcid))
 #             print("********************** Creating boxlist ***********************")
@@ -378,7 +470,7 @@ def erass1_upperlimit(ra,dec,band='024'):
 #     return 
 
 
-# def source_match(cat_name,target_ra,target_dec,target_unit='deg',target_frame='icrs',match_radius=15*u.arcsec,cat_ra='RA',cat_dec='DEC',cat_unit='deg',cat_frame='icrs'):
+# def source_match(cat_name,target_ra,target_dec,target_unit="deg",target_frame="icrs",match_radius=15*u.arcsec,cat_ra="RA",cat_dec="DEC",cat_unit="deg",cat_frame="icrs"):
 #     """
 #     Match target source in a given catalog.
 
@@ -393,7 +485,7 @@ def erass1_upperlimit(ra,dec,band='024'):
 #     idx = result[1]
 #     sep = result[2].arcsec
 #     if len(idx) == 0:
-#         print('Target source NONDET in catalog.')
+#         print("Target source NONDET in catalog.")
 #         return None
 #     idx_closest = idx[np.argsort(sep)[0]]
 #     return idx_closest
