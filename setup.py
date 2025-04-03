@@ -22,7 +22,7 @@ setup(
     entry_points={
         'console_scripts': [
             'run_apetool = erotools_scripts.apetool_autoscript:main',
-            'get_ero_skytile = erotols_scripts.get_ero_skytile:main'
+            'get_ero_skytile = erotools_scripts.get_ero_skytile:main'
         ]
     }
 )
