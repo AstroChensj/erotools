@@ -6,6 +6,7 @@ from astropy.wcs import WCS
 from astropy_healpix import HEALPix
 import requests
 import os
+from erotools.radec2tile import tile_local
 eRASS_CAT_DIR = os.environ.get("eRASS_CAT_DIR") # remember to set the eRASS_CAT_DIR environmental variable!
 # /data/chensj/eROSITA/catalogs
 
@@ -20,16 +21,16 @@ main_cat_5 = f"{eRASS_CAT_DIR}/all_s4_s5_SourceCat1B_c030_240905_poscorr_mpe_pho
 #############################################
 ############## MAIN FUNCTIONS ###############
 #############################################
-def fake_srclist(target_ra,target_dec,outname,science_img,skytile=None,style="box"):
+def fake_srclist(skytile,outname,science_img,style="box"):
     """
-    Look for a target in eRASS1 Main+Supp catalogs, and generte a `boxlist` for all detected sources in the skytile where it belongs to.
+    Generte a `boxlist` for all detected sources in a given skytile.
 
     Parameters
     ----------
-    target_ra : float
-    target_dec : float
+    skytile : str
     outname : str
     science_img : str
+        This must be the science image after running `evtool`! Otherwise the header will be inappropriate and fail to generate correct cheesemask/mllist!
     style : str, optional
         Output catalog in `erbox` format (`box`) or `catprep` format (`cat`).
 
@@ -43,160 +44,152 @@ def fake_srclist(target_ra,target_dec,outname,science_img,skytile=None,style="bo
         supp_data = hdu[1].data
     data = np.append(main_data,supp_data)
 
-    if skytile is None: # if user prefer not to provide skytile, we look for it ourselves
-        skytile = find_erode_skytile(target_ra,target_dec)
+    skytile = int(skytile)  # to match catalog standard
+    data_inskytile = data[data["SKYTILE"]==skytile]
+    print("********************** Creating fake srclist ***********************")
+    # get wcs
+    with fits.open(science_img) as hdu:
+        img_head = hdu[0].header    # naxis=1 here, don't use
+        evt_head = hdu[1].header    # naxis=2 here, use this one
+        wcs = WCS(img_head)
+    # get hdu[1].header
+    excluded_keys = [
+        "XTENSION","BITPIX","NAXIS","NAXIS1","NAXIS2","PCOUNT","GCOUNT","TFIELDS","TTYPE","TFORM","TUNIT","EXTNAME",
+        "TSCAL","TZERO" # this two header keyword will change column values! 
+    ]
+    science_head = fits.Header({
+        key: value for key,value in evt_head.items()
+        if not any(key.startswith(prefix) for prefix in excluded_keys)
+    })
+    # id
+    id_src_inskytile = data_inskytile["ID_SRC"]
+    id_band_inskytile = np.ones(len(id_src_inskytile))
+    id_inst_inskytile = np.zeros(len(id_src_inskytile))
+    dist_nn_inskytile = np.zeros(len(id_src_inskytile)) # set to 0 for the moment
+    # coordinates
+    ra_inskytile = data_inskytile["RA"]
+    ralo_inskytile = data_inskytile["RA_LOWERR"]    # in units of arcsec
+    rahi_inskytile = data_inskytile["RA_UPERR"]     # in units of arcsec
+    raerr_inskytile = (ralo_inskytile + rahi_inskytile) / 2 / 3600  # in units of degree, for later use in wcs error propagation
+    dec_inskytile = data_inskytile["DEC"]
+    declo_inskytile = data_inskytile["DEC_LOWERR"]
+    dechi_inskytile = data_inskytile["DEC_UPERR"]
+    decerr_inskytile = (declo_inskytile + dechi_inskytile) / 2 / 3600   # in units of degree
+    radec_err_inskytile = data_inskytile["RADEC_ERR"]
+    x_ima_inskytile,y_ima_inskytile = wcs.all_world2pix(ra_inskytile,dec_inskytile,1)  # image pixel starts with 1
+    x1,y1 = wcs.all_world2pix(ra_inskytile+raerr_inskytile,dec_inskytile,1)
+    x2,y2 = wcs.all_world2pix(ra_inskytile,dec_inskytile+decerr_inskytile,1)
+    pxpra_dra = x1 - x_ima_inskytile    # partial(x)/partial(ra) * d ra
+    pxpdec_ddec = x2 - x_ima_inskytile  # partial(x)/partial(dec) * d dec
+    x_ima_err_inskytile = np.sqrt(pxpra_dra**2+pxpdec_ddec**2)
+    pypra_dra = y1 - y_ima_inskytile    # partial(y)/partial(ra) * d ra
+    pypdec_ddec = y2 - y_ima_inskytile  # partial(y)/partial(dec) * d dec
+    y_ima_err_inskytile = np.sqrt(pypra_dra**2+pypdec_ddec**2)
+    lII_inskytile = data_inskytile["LII"]
+    bII_inskytile = data_inskytile["BII"]
+    # counts, rate, flux
+    like_inskytile = data_inskytile["DET_LIKE_0"]
+    scts_inskytile = data_inskytile["ML_CTS_1"]
+    scts_err_inskytile = data_inskytile["ML_CTS_ERR_1"]
+    sctslo_inskytile = data_inskytile["ML_CTS_LOWERR_1"]
+    sctshi_inskytile = data_inskytile["ML_CTS_UPERR_1"]
+    box_cts_inskytile = scts_inskytile
+    bg_map_inskytile = data_inskytile["ML_BKG_1"]
+    bg_raw_inskytile = data_inskytile["ML_BKG_1"]
+    flux_inskytile = data_inskytile["ML_FLUX_1"]
+    flux_err_inskytile = data_inskytile["ML_FLUX_ERR_1"]
+    fluxlo_inskytile = data_inskytile["ML_FLUX_LOWERR_1"]
+    fluxhi_inskytile = data_inskytile["ML_FLUX_UPERR_1"]
+    rate_inskytile = data_inskytile["ML_RATE_1"]
+    rate_err_inskytile = data_inskytile["ML_RATE_ERR_1"]
+    ratelo_inskytile = data_inskytile["ML_RATE_LOWERR_1"]
+    ratehi_inskytile = data_inskytile["ML_RATE_UPERR_1"]
+    exp_map_inskytile = data_inskytile["ML_EXP_1"]
+    box_size_inskytile = 4*np.ones(len(id_src_inskytile))   # assumes boxsize of 4 as recommended
+    eef_inskytile = data_inskytile["ML_EEF_1"]
+    # ext
+    ext_inskytile = data_inskytile["EXT"]
+    exterr_inskytile = data_inskytile["EXT_ERR"]
+    extlo_inskytile = data_inskytile["EXT_LOWERR"]
+    exthi_inskytile = data_inskytile["EXT_UPERR"]
+    extlike_inskytile = data_inskytile["EXT_LIKE"]
 
-    if skytile is not None: # if target lies in eRO-DE sky
-        skytile = int(skytile)  # to match catalog standard
-        data_inskytile = data[data["SKYTILE"]==skytile]
-        print("********************** Creating boxlist ***********************")
-        # get wcs
-        with fits.open(science_img) as hdu:
-            img_head = hdu[0].header    # naxis=1 here, don't use
-            evt_head = hdu[1].header    # naxis=2 here, use this one
-            wcs = WCS(evt_head)
-        # get hdu[1].header
-        excluded_keys = [
-            "XTENSION","BITPIX","NAXIS","NAXIS1","NAXIS2","PCOUNT","GCOUNT","TFIELDS","TTYPE","TFORM","TUNIT","EXTNAME",
-            "TSCAL","TZERO" # this two header keyword will change column values! 
+    # make fits file
+    if style == "box":  # mock catalog from erbox
+        arrays = [
+            id_src_inskytile,id_inst_inskytile,id_band_inskytile,
+            scts_inskytile,scts_err_inskytile,box_cts_inskytile,
+            x_ima_inskytile,x_ima_err_inskytile,y_ima_inskytile,y_ima_err_inskytile,
+            like_inskytile,bg_map_inskytile,bg_raw_inskytile,exp_map_inskytile,
+            flux_inskytile,flux_err_inskytile,rate_inskytile,rate_err_inskytile,
+            ra_inskytile,dec_inskytile,radec_err_inskytile,lII_inskytile,bII_inskytile,
+            box_size_inskytile,eef_inskytile,dist_nn_inskytile
         ]
-        science_head = fits.Header({
-            key: value for key,value in evt_head.items()
-            if not any(key.startswith(prefix) for prefix in excluded_keys)
-        })
-        # id
-        id_src_inskytile = data_inskytile["ID_SRC"]
-        id_band_inskytile = np.ones(len(id_src_inskytile))
-        id_inst_inskytile = np.zeros(len(id_src_inskytile))
-        dist_nn_inskytile = np.zeros(len(id_src_inskytile)) # set to 0 for the moment
-        # coordinates
-        ra_inskytile = data_inskytile["RA"]
-        ralo_inskytile = data_inskytile["RA_LOWERR"]    # in units of arcsec
-        rahi_inskytile = data_inskytile["RA_UPERR"]     # in units of arcsec
-        raerr_inskytile = (ralo_inskytile + rahi_inskytile) / 2 / 3600  # in units of degree, for later use in wcs error propagation
-        dec_inskytile = data_inskytile["DEC"]
-        declo_inskytile = data_inskytile["DEC_LOWERR"]
-        dechi_inskytile = data_inskytile["DEC_UPERR"]
-        decerr_inskytile = (declo_inskytile + dechi_inskytile) / 2 / 3600   # in units of degree
-        radec_err_inskytile = data_inskytile["RADEC_ERR"]
-        x_ima_inskytile,y_ima_inskytile = wcs.all_world2pix(ra_inskytile,dec_inskytile,1)  # image pixel starts with 1
-        x1,y1 = wcs.all_world2pix(ra_inskytile+raerr_inskytile,dec_inskytile,1)
-        x2,y2 = wcs.all_world2pix(ra_inskytile,dec_inskytile+decerr_inskytile,1)
-        pxpra_dra = x1 - x_ima_inskytile    # partial(x)/partial(ra) * d ra
-        pxpdec_ddec = x2 - x_ima_inskytile  # partial(x)/partial(dec) * d dec
-        x_ima_err_inskytile = np.sqrt(pxpra_dra**2+pxpdec_ddec**2)
-        pypra_dra = y1 - y_ima_inskytile    # partial(y)/partial(ra) * d ra
-        pypdec_ddec = y2 - y_ima_inskytile  # partial(y)/partial(dec) * d dec
-        y_ima_err_inskytile = np.sqrt(pypra_dra**2+pypdec_ddec**2)
-        lII_inskytile = data_inskytile["LII"]
-        bII_inskytile = data_inskytile["BII"]
-        # counts, rate, flux
-        like_inskytile = data_inskytile["DET_LIKE_0"]
-        scts_inskytile = data_inskytile["ML_CTS_1"]
-        scts_err_inskytile = data_inskytile["ML_CTS_ERR_1"]
-        sctslo_inskytile = data_inskytile["ML_CTS_LOWERR_1"]
-        sctshi_inskytile = data_inskytile["ML_CTS_UPERR_1"]
-        box_cts_inskytile = scts_inskytile
-        bg_map_inskytile = data_inskytile["ML_BKG_1"]
-        bg_raw_inskytile = data_inskytile["ML_BKG_1"]
-        flux_inskytile = data_inskytile["ML_FLUX_1"]
-        flux_err_inskytile = data_inskytile["ML_FLUX_ERR_1"]
-        fluxlo_inskytile = data_inskytile["ML_FLUX_LOWERR_1"]
-        fluxhi_inskytile = data_inskytile["ML_FLUX_UPERR_1"]
-        rate_inskytile = data_inskytile["ML_RATE_1"]
-        rate_err_inskytile = data_inskytile["ML_RATE_ERR_1"]
-        ratelo_inskytile = data_inskytile["ML_RATE_LOWERR_1"]
-        ratehi_inskytile = data_inskytile["ML_RATE_UPERR_1"]
-        exp_map_inskytile = data_inskytile["ML_EXP_1"]
-        box_size_inskytile = 4*np.ones(len(id_src_inskytile))   # assumes boxsize of 4 as recommended
-        eef_inskytile = data_inskytile["ML_EEF_1"]
-        # ext
-        ext_inskytile = data_inskytile["EXT"]
-        exterr_inskytile = data_inskytile["EXT_ERR"]
-        extlo_inskytile = data_inskytile["EXT_LOWERR"]
-        exthi_inskytile = data_inskytile["EXT_UPERR"]
-        extlike_inskytile = data_inskytile["EXT_LIKE"]
+        colnames = [
+            "id_src","id_inst","id_band",
+            "scts","scts_err","box_cts",
+            "x_ima","x_ima_err","y_ima","y_ima_err",
+            "like","bg_map","bg_raw","exp_map",
+            "flux","flux_err","rate","rate_err",
+            "ra","dec","radec_err","lII","bII",
+            "box_size","eef","dist_nn"
+        ]
+        formats = [
+            "1J","1J","1J",
+            "1E","1E","1E",
+            "1E","1E","1E","1E",
+            "1E","1E","1E","1E",
+            "1E","1E","1E","1E",
+            "1E","1E","1E","1E","1E",
+            "1J","1E","1E"
+        ]
+        ## add a fake row with id_inst=1; without it ermldet cannot allocate memory to `tmplist` and likely raise an error (0x42d645,ermldet_in,line 630)
+        arrays = [np.append(arr[0],arr) for arr in arrays]
+        arrays[1][0] = 1
 
-        # make fits file
-        if style == "box":
-            arrays = [
-                id_src_inskytile,id_inst_inskytile,id_band_inskytile,
-                scts_inskytile,scts_err_inskytile,box_cts_inskytile,
-                x_ima_inskytile,x_ima_err_inskytile,y_ima_inskytile,y_ima_err_inskytile,
-                like_inskytile,bg_map_inskytile,bg_raw_inskytile,exp_map_inskytile,
-                flux_inskytile,flux_err_inskytile,rate_inskytile,rate_err_inskytile,
-                ra_inskytile,dec_inskytile,radec_err_inskytile,lII_inskytile,bII_inskytile,
-                box_size_inskytile,eef_inskytile,dist_nn_inskytile
-            ]
-            colnames = [
-                "id_src","id_inst","id_band",
-                "scts","scts_err","box_cts",
-                "x_ima","x_ima_err","y_ima","y_ima_err",
-                "like","bg_map","bg_raw","exp_map",
-                "flux","flux_err","rate","rate_err",
-                "ra","dec","radec_err","lII","bII",
-                "box_size","eef","dist_nn"
-            ]
-            formats = [
-                "1J","1J","1J",
-                "1E","1E","1E",
-                "1E","1E","1E","1E",
-                "1E","1E","1E","1E",
-                "1E","1E","1E","1E",
-                "1E","1E","1E","1E","1E",
-                "1J","1E","1E"
-            ]
-            ## add a fake row with id_inst=1; without it ermldet cannot allocate memory to `tmplist` and likely raise an error (0x42d645,ermldet_in,line 630)
-            arrays = [np.append(arr[0],arr) for arr in arrays]
-            arrays[1][0] = 1
+    elif style == "cat":    # mock catalog in catprep standards
+        arrays = [
+            id_src_inskytile,
+            ra_inskytile,ralo_inskytile,rahi_inskytile,dec_inskytile,declo_inskytile,dechi_inskytile,radec_err_inskytile,lII_inskytile,bII_inskytile,
+            ext_inskytile,exterr_inskytile,extlo_inskytile,exthi_inskytile,extlike_inskytile,
+            scts_inskytile,scts_err_inskytile,sctslo_inskytile,sctshi_inskytile,
+            rate_inskytile,rate_err_inskytile,ratelo_inskytile,ratehi_inskytile,
+            flux_inskytile,flux_err_inskytile,fluxlo_inskytile,fluxhi_inskytile,
+            like_inskytile,bg_map_inskytile,exp_map_inskytile,eef_inskytile,
+        ]
+        colnames = [
+            "ID_SRC",
+            "RA","RA_LOWERR","RA_UPERR","DEC","DEC_LOWERR","DEC_UPERR","RADEC_ERR","LII","BII",
+            "EXT","EXT_ERR","EXT_LOWERR","EXT_UPERR","EXT_LIKE",
+            "ML_CTS_0","ML_CTS_ERR_0","ML_CTS_LOWERR_0","ML_CTS_UPERR_0",
+            "ML_RATE_0","ML_RATE_ERR_0","ML_RATE_LOWERR_0","ML_RATE_UPERR_0",
+            "ML_FLUX_0","ML_FLUX_ERR_0","ML_FLUX_LOWERR_0","ML_FLUX_UPERR_0",
+            "DET_LIKE_0","ML_BKG_0","ML_EXP_0","ML_EEF_0",
+        ]
+        formats = [
+            "1J",
+            "1E","1E","1E","1E","1E","1E","1E","1E","1E",
+            "1E","1E","1E","1E","1E",
+            "1E","1E","1E","1E",
+            "1E","1E","1E","1E",
+            "1E","1E","1E","1E",
+            "1E","1E","1E","1E",
+        ]
+    else:
+        raise Exception("Allowed `style` is `box` or `cat` !")
+    
+    hdu_lst = fits.HDUList()
+    hdu_primary = fits.PrimaryHDU()
+    hdu_lst.append(hdu_primary)
 
-        elif style == "cat":
-            arrays = [
-                id_src_inskytile,
-                ra_inskytile,ralo_inskytile,rahi_inskytile,dec_inskytile,declo_inskytile,dechi_inskytile,radec_err_inskytile,lII_inskytile,bII_inskytile,
-                ext_inskytile,exterr_inskytile,extlo_inskytile,exthi_inskytile,extlike_inskytile,
-                scts_inskytile,scts_err_inskytile,sctslo_inskytile,sctshi_inskytile,
-                rate_inskytile,rate_err_inskytile,ratelo_inskytile,ratehi_inskytile,
-                flux_inskytile,flux_err_inskytile,fluxlo_inskytile,fluxhi_inskytile,
-                like_inskytile,bg_map_inskytile,exp_map_inskytile,eef_inskytile,
-            ]
-            colnames = [
-                "ID_SRC",
-                "RA","RA_LOWERR","RA_UPERR","DEC","DEC_LOWERR","DEC_UPERR","RADEC_ERR","LII","BII",
-                "EXT","EXT_ERR","EXT_LOWERR","EXT_UPERR","EXT_LIKE",
-                "ML_CTS_0","ML_CTS_ERR_0","ML_CTS_LOWERR_0","ML_CTS_UPERR_0",
-                "ML_RATE_0","ML_RATE_ERR_0","ML_RATE_LOWERR_0","ML_RATE_UPERR_0",
-                "ML_FLUX_0","ML_FLUX_ERR_0","ML_FLUX_LOWERR_0","ML_FLUX_UPERR_0",
-                "DET_LIKE_0","ML_BKG_0","ML_EXP_0","ML_EEF_0",
-            ]
-            formats = [
-                "1J",
-                "1E","1E","1E","1E","1E","1E","1E","1E","1E",
-                "1E","1E","1E","1E","1E",
-                "1E","1E","1E","1E",
-                "1E","1E","1E","1E",
-                "1E","1E","1E","1E",
-                "1E","1E","1E","1E",
-            ]
-        else:
-            raise Exception("Allowed `style` is `box` or `cat` !")
-        
-        
-        hdu_lst = fits.HDUList()
-        hdu_primary = fits.PrimaryHDU()
-        hdu_lst.append(hdu_primary)
+    columns = [fits.Column(name=colname_,format=format_,array=array_) for colname_,format_,array_ in zip(colnames,formats,arrays)]
+    hdu_data = fits.BinTableHDU.from_columns(columns,name="SRCLIST")
+    # copy the header from science_image here
+    for key,value in science_head.items():
+        hdu_data.header[key] = value
+    hdu_lst.append(hdu_data)
 
-        columns = [fits.Column(name=colname_,format=format_,array=array_) for colname_,format_,array_ in zip(colnames,formats,arrays)]
-        hdu_data = fits.BinTableHDU.from_columns(columns,name="SRCLIST")
-        # copy the header from science_image here
-        for key,value in science_head.items():
-            hdu_data.header[key] = value
-        hdu_lst.append(hdu_data)
-
-        hdu_lst.writeto(outname,overwrite=True)
-
-    else:   # if not in eRO-DE sky
-        raise Exception("Target source not in eROSITA:DE sky. Aperture photometry cannot be proceeded.")
+    hdu_lst.writeto(outname,overwrite=True)
     
     return
 
@@ -289,48 +282,6 @@ def create_aperture(RA,DEC,RE=0.75,RR=0.75,outname="fake_ape.fits"):
 #############################################
 ############### MISCELLANEOUS ###############
 #############################################
-def find_erode_skytile(ra,dec,radius=0):
-    """
-    Query the eROSITA sky tiles for a given sky position and radius.
-
-    Parameters
-    ----------
-    ra : float
-        Right Ascension in decimal degrees.
-    dec : float 
-        Declination in decimal degrees.
-    radius : float, optional
-        Search radius in decimal degrees. Default is 0 (point).
-
-    Returns
-    -------
-    The resulting skytile (None if not found).
-    """
-    # Construct the API URL
-    base_url = "https://erosita.mpe.mpg.de/dr1/erodat/skyview/skytile_search_api/"
-    url = f"{base_url}?RA={ra}&DEC={dec}&RAD={radius}"
-    try:
-        # Query the API
-        response = requests.get(url)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        # Parse the JSON response
-        data = response.json()
-        # Check if the response contains tiles
-        if "tiles" in data:
-            de_sky = data["tiles"][0]["de_sky"]
-            if de_sky:
-                return f"{data['tiles'][0]['srvmap']:06d}"
-            else:
-                print("Target source not in eROSITA:DE sky!")
-                return None
-        else:
-            print("No tiles found for the given position and radius.")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error querying the API: {e}")
-        return None
-    
-
 def search_catalog(target_ra,target_dec,match_radius=15):
     """
     Search for target in eRASS1 MAIN+SUPP catalog.
