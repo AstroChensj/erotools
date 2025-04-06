@@ -43,6 +43,7 @@ parser.add_argument("--prefix",type=str,default="",help="prefix for all products
 parser.add_argument("--suffix",type=str,default="",help="suffix for all products")
 parser.add_argument("--R_match",type=float,default=15,help="matching radius (arcsec) between target and dr1 catalog (recommend: 15)")
 parser.add_argument("--R_confusion",type=float,default=60,help="confusion radius (arcsec), where sources in annulus of R_match ~ R_confusion lead to confusion issues (recommend: 60)")
+parser.add_argument("--conf_limit",type=float,default=0.90,help="confidence limit for upper limit calculation, defaults to 0.90")
 args = parser.parse_args()
 
 
@@ -242,9 +243,9 @@ def main():
     FLUX_HI = CR_HI / ecf
 
     # calculate upper limit (credit: A.Ruiz)
-    UL = counts_ul_poisson(data["APE_CTS"],data["APE_BKG"],conf_limit=0.90) # estimate 90% upper limit in units of counts
-    CR_UL =  UL / data["APE_EEF"] / data["APE_EXP"]     # estimate 90% upper limit on the count rate inlcuding correction for the EEF
-    FLUX_UL =  CR_UL / ecf  # estimate 90% upper limit on the X-ray flux assuming an ECF correction
+    UL = counts_ul_poisson(data["APE_CTS"],data["APE_BKG"],conf_limit=args.conf_limit) # estimate 90% (or user-specified) upper limit in units of counts
+    CR_UL =  UL / data["APE_EEF"] / data["APE_EXP"]     # estimate 90% (or user-specified) upper limit on the count rate inlcuding correction for the EEF
+    FLUX_UL =  CR_UL / ecf  # estimate 90% (or user-specified) upper limit on the X-ray flux assuming an ECF correction
 
     # write data
     hdu_lst = fits.HDUList()
@@ -291,10 +292,10 @@ def main():
     logger.info(f"Aperture bkg counts: {ape_bkg}")
     logger.info(f"")
     logger.info(f"Source detection likelihood: {detlike[0]}")
-    logger.info(f"Source count rate (EEF corrected, 68%%): {CR_ME[0]} (-{CR_LO[0]},+{CR_HI[0]})")
-    logger.info(f"Upper limit for source count rate (EEF corrected, 90%%): {CR_UL[0]}")
-    logger.info(f"Source flux (EEF corrected, 68%%): {FLUX_ME[0]:.3e} (-{FLUX_LO[0]:.3e},+{FLUX_HI[0]:.3e})")
-    logger.info(f"Upper limit for source flux (EEF corrected, 90%%): {FLUX_UL[0]:.3e}")
+    logger.info(f"Source count rate (EEF corrected, 68%): {CR_ME[0]} (-{CR_LO[0]},+{CR_HI[0]})")
+    logger.info(f"Upper limit for source count rate (EEF corrected, {args.conf_limit*100}%): {CR_UL[0]}")
+    logger.info(f"Source flux (EEF corrected, 68%): {FLUX_ME[0]:.3e} (-{FLUX_LO[0]:.3e},+{FLUX_HI[0]:.3e})")
+    logger.info(f"Upper limit for source flux (EEF corrected, {args.conf_limit*100}%): {FLUX_UL[0]:.3e}")
     logger.info(f"")
     logger.info(f"Results file saved to {apesummary}")
 
