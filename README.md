@@ -8,8 +8,8 @@ These include:
 ## Installation
 
 ```shell
-git clone
-cd
+git clone https://github.com/AstroChensj/erotools.git
+cd erotools
 python -m pip install .
 ```
 
