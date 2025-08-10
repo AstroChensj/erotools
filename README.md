@@ -1,12 +1,14 @@
 # Helpful tools for eROSITA
 
 These include:
-- `eroforcedphot`: performing forced photometry on eROSITA data.
+- `eroforcedphot`: perform forced photometry on eROSITA data.
   - This is a wrapper code for [apetool](https://erosita.mpe.mpg.de/dr1/eSASS4DR1/eSASS4DR1_tasks/apetool_doc.html).
-- `eroforcedspec`: performing forced spectroscopy on eROSITA data.
+- `eroforcedspec`: perform forced spectroscopy on eROSITA data.
   - This is a wrapper code for [srctool](https://erosita.mpe.mpg.de/dr1/eSASS4DR1/eSASS4DR1_tasks/srctool_doc.html).
 - `erotile_api` and `erotile_local`: get the sky tile (eROSITA) for a given ra, dec.
   - This is copied from [Jeremy Sanders' code](https://erosita.mpe.mpg.de/dr1/AllSkySurveyData_dr1/apis.html), used for other functions in this code.
+- `eroecf`: compute energy conversion factor.
+  - A tutorial on eROSITA ECF calculation can be found [here](https://erosita.mpe.mpg.de/dr1/eSASS4DR1/eSASS4DR1_arfrmf/eROSITA_ECF_tutorial.pdf).
 
 ## Installation
 
@@ -50,6 +52,15 @@ eroforcedspec /path/to/your/science_events_file target_ra target_dec --redshift 
 - Replace `./out/forcedspec_` with the desired output prefix.
 
 The output will be SPEC, BKGSPEC, ARF, RMF, alongside the redshift and galnh files (if `--record_redshift` and `--record_galnh`).
+
+### ECF calculation
+```shell
+eroecf 0.2 2.3 0.5 2.0 --arf onaxis --rmf onaxis --xmodel 'TBabs*powerlaw' --xmodel_par '1:0.01,2:2.0,3:1'
+```
+- `eroecf` is an alias for `python ./erotools_scripts/geteroecf.py`.
+- `0.2 2.3 0.5 2.0` represents `emin_rate`, `emax_rate`, `emin_flux`, `emax_flux`.
+- If you want to use off-axis response files, replace `onaxis` with the path to those.
+- User should either supply an xcm file (`restore_file`, from Xset.save or Xspec command line), or a spectral model (`xmodel`) along with detailed settings (`xmodel_par`).
 
 
 ## Credit

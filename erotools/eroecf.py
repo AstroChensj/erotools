@@ -9,7 +9,7 @@ default_ARF = os.path.join(os.path.dirname(__file__),"onaxis_tm0_arf_filter_2023
 default_RMF = os.path.join(os.path.dirname(__file__),"onaxis_tm0_rmf_2023-01-17.fits.gz")
 
 
-def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,arf=default_ARF,rmf=default_RMF,restore_file=None,xmodel="tbabs*powerlaw",xmodel_par={1:0.01,2:2.0,3:1},chatter=0,abund="wilm",lmod=None,xset=None):
+def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,arf="onaxis",rmf="onaxis",restore_file=None,xmodel="tbabs*powerlaw",xmodel_par={1:0.01,2:2.0,3:1},chatter=0,abund="wilm",lmod=None,xset=None):
     """
     Energy conversion factor (ECF) calculation for eROSITA observations, where ECF defined as: rate (Photons/s) / flux (erg/cm^2/s).
     User should either supply an xcm file (`restore_file`, from Xset.save or Xspec command line), or a spectral model (`xmodel`) along with detailed settings (`xmodel_par`).
@@ -26,9 +26,9 @@ def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,arf=default_ARF,rmf=defau
     emax_flux : float
         emax for flux calculation.
     arf : str, optional
-        Path to the ARF file. Defaults to `default_ARF`.
+        Path to the ARF file. Defaults to 'onaxis', i.e., using the on-axis ARF.
     rmf : str, optional
-        Path to the RMF file. Defaults to `default_RMF`.
+        Path to the RMF file. Defaults to 'onaxis', i.e., using the on-axis RMF.
     restore_file : str, optional
         Path to an XSPEC xcm file to restore the model from. If provided, `xmodel` and `xmodel_par` are ignored.
     xmodel : str
@@ -63,6 +63,10 @@ def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,arf=default_ARF,rmf=defau
     if xset is not None:
         for key,val in xset.items():
             Xset.addModelString(key,val)
+    if arf == "onaxis":
+        arf = default_ARF
+    if rmf == "onaxis":
+        rmf = default_RMF
     # set model
     AllModels.clear()
     if restore_file is not None:    # we can either load a xcm file
