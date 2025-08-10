@@ -5,6 +5,16 @@ Energy conversion factor (ECF) calculation for eROSITA observations, where ECF d
 User should either supply an xcm file (`restore_file`, from Xset.save or Xspec command line), or a spectral model (`xmodel`) along with detailed settings (`xmodel_par`).
 Note that on-axis eROSITA response files are used, unless specified otherwise.
 
+Examples
+--------
+```shell
+eroecf 0.2 2.3 0.5 2.0 --arf onaxis --rmf onaxis --xmodel 'TBabs*powerlaw' --xmodel_par '1:0.01,2:2.0,3:1'
+```
+
+```shell
+eroecf 0.2 2.3 0.5 2.0 --arf onaxis --rmf onaxis --restore_file path/to/your_model.xcm
+```
+
 """
 import numpy as np
 from astropy.io import fits

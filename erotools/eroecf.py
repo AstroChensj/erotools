@@ -94,6 +94,8 @@ def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,arf="onaxis",rmf="onaxis"
     ECF = rate / flux
 
     print("################# ECF CALCULATION #################")
+    print(f"Assuming RMF: {rmf}")
+    print(f"Assuming ARF: {arf}")
     print(f"Assuming model: {xmodel}")
     for i in range(m1.nParameters):
         print(f"{m1(i+1).name}:\t\t{m1(i+1).values[0]}")
