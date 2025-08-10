@@ -4,14 +4,16 @@ import os
 import sys
 from xspec import *
 
-default_ARF = os.path.join(os.path.dirname(__file__),'onaxis_tm0_arf_filter_2023-01-17.fits.gz')
-default_RMF = os.path.join(os.path.dirname(__file__),'onaxis_tm0_rmf_2023-01-17.fits.gz')
+# on-axis eROSITA response files
+default_ARF = os.path.join(os.path.dirname(__file__),"onaxis_tm0_arf_filter_2023-01-17.fits.gz")
+default_RMF = os.path.join(os.path.dirname(__file__),"onaxis_tm0_rmf_2023-01-17.fits.gz")
 
 
-def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,xmodel="tbabs*powerlaw",xmodel_par={1:0.01,2:2.0,3:1},chatter=0,abund="wilm",lmod=None,xset=None):
+def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,arf=default_ARF,rmf=default_RMF,restore_file=None,xmodel="tbabs*powerlaw",xmodel_par={1:0.01,2:2.0,3:1},chatter=0,abund="wilm",lmod=None,xset=None):
     """
-    Energy conversion factor (ECF) calculation, where ECF defined as: rate (Photons/s) / flux (erg/cm^2/s).
-    User should supply the spectral model.
+    Energy conversion factor (ECF) calculation for eROSITA observations, where ECF defined as: rate (Photons/s) / flux (erg/cm^2/s).
+    User should either supply an xcm file (`restore_file`, from Xset.save or Xspec command line), or a spectral model (`xmodel`) along with detailed settings (`xmodel_par`).
+    Note that on-axis eROSITA response files are used, unless specified otherwise.
 
     Parameters
     ----------
@@ -23,6 +25,12 @@ def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,xmodel="tbabs*powerlaw",x
         emin for flux calculation.
     emax_flux : float
         emax for flux calculation.
+    arf : str, optional
+        Path to the ARF file. Defaults to `default_ARF`.
+    rmf : str, optional
+        Path to the RMF file. Defaults to `default_RMF`.
+    restore_file : str, optional
+        Path to an XSPEC xcm file to restore the model from. If provided, `xmodel` and `xmodel_par` are ignored.
     xmodel : str
         XSPEC model for the calculation. Defaults to "TBabs*powerlaw".
     xmodel_par : dict
@@ -57,11 +65,22 @@ def get_eroecf(emin_rate,emax_rate,emin_flux,emax_flux,xmodel="tbabs*powerlaw",x
             Xset.addModelString(key,val)
     # set model
     AllModels.clear()
-    m1 = Model(xmodel)
-    m1.setPars(xmodel_par)
+    if restore_file is not None:    # we can either load a xcm file
+        # check for PyXspec indicator in first line
+        xcm_content = open(restore_file,"r").read()
+        if not xcm_content[0].startswith("#PyXspec"):
+            print("Not a PyXspec log file. Append #PyXspec to first line.")
+            with open(restore_file,"w") as f:
+                f.write(f"#PyXspec: Output generated from Xset.save().  DO NOT MODIFY.\n{xcm_content}")
+        Xset.restore(restore_file)
+        m1 = AllModels(1)
+        xmodel = m1.expression  # read model expression
+    else:   # or specify the model manually
+        m1 = Model(xmodel)
+        m1.setPars(xmodel_par)
 
     AllData.clear()
-    AllData.fakeit(1,FakeitSettings(response=default_RMF,arf=default_ARF,exposure=100),noWrite=True)
+    AllData.fakeit(1,FakeitSettings(response=rmf,arf=arf,exposure=10000),noWrite=True)
     AllData.ignore(f"0.-{emin_rate} {emax_rate}-**")
     # calculate model flux
     AllModels.calcFlux(f"{emin_flux} {emax_flux}") # to get emin -- emax flux, you must first run calcFlux
