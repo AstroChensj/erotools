@@ -15,6 +15,7 @@ eRASS_CAT_DIR = os.environ.get("eRASS_CAT_DIR") # remember to set the eRASS_CAT_
 #############################################
 main_cat = f"{eRASS_CAT_DIR}/eRASS1_Main.v1.1.fits"
 supp_cat = f"{eRASS_CAT_DIR}/eRASS1_Supp.v1.1.fits"
+ctp_cat = f"{eRASS_CAT_DIR}/Salvato_etal2025_DR1_LS10.fits"
 main_cat_5 = f"{eRASS_CAT_DIR}/all_s4_s5_SourceCat1B_c030_240905_poscorr_mpe_photom.fits"
 
 
@@ -144,8 +145,9 @@ def fake_srclist(skytile,outname,science_img,style="box"):
             "1J","1E","1E"
         ]
         ## add a fake row with id_inst=1; without it ermldet cannot allocate memory to `tmplist` and likely raise an error (0x42d645,ermldet_in,line 630)
-        arrays = [np.append(arr[0],arr) for arr in arrays]
-        arrays[1][0] = 1
+        if len(arrays[0])>0:
+            arrays = [np.append(arr[0],arr) for arr in arrays]
+            arrays[1][0] = 1
 
     elif style == "cat":    # mock catalog in catprep standards
         arrays = [
@@ -196,13 +198,15 @@ def fake_srclist(skytile,outname,science_img,style="box"):
 
 def look_for_confusion(target_ra,target_dec,R_match=15*u.arcsec,R_confusion=60*u.arcsec,cat_ra="RA",cat_dec="DEC"):
     """
-    Check if there are source confusion issues.
+    Check if there are confusion sources---sources in the R_match ~ R_confusion (e.g., 15 ~ 60'') annulus around target source---whose PSF wings could contaminate target source's aperture photometry.
 
     Around the target position, we are interested in two regions: 
     - (Region I) The circle of with radius of `R_match`, within which we find our target source in the catalog. For eROSITA `R_match` can be chosen as 15'' (following Merloni+24). 
     - (Region II) The annulus with inner radius of `R_match` and outer radius of `R_confusion`. Sources in this region are not associated with our target. But their PSF wings can extend to the source extraction radius (typically 75% EEF, or ~30''), leading to source confusion issues. eROSITA"s HEW is ~30'', so a typical value for `R_confusion` can be 60''.
 
-    Number of source in this Region I should ideally be 1. It doesn't matter if =0 (non detection). >1 means target source lying in very dense regions, which is problematic and current code cannot treat it.  
+    Number of source in this Region I should ideally be 1. It doesn't matter if =0 (non detection). >1 means target source lying in very dense regions, which is problematic and current code cannot treat it.
+
+    `target_ra` and `target_dec` is normally optical positions. Mara's CTP catalog (with precise optical-Xray position match) could be used but it is not necessary, as the 15 ~ 60'' is a very large angular distance and the Xray-Xray match should be sufficient. 
 
     Parameters
     ----------
@@ -282,7 +286,7 @@ def create_aperture(RA,DEC,RE=0.75,RR=0.75,outname="fake_ape.fits"):
 #############################################
 ############### MISCELLANEOUS ###############
 #############################################
-def search_catalog(target_ra,target_dec,match_radius=15):
+def search_catalog(target_ra,target_dec,match_radius_optical=3,match_radius_xray=15):
     """
     Search for target in eRASS1 MAIN+SUPP catalog.
 
@@ -292,7 +296,9 @@ def search_catalog(target_ra,target_dec,match_radius=15):
         Target ra in units of deg.
     target_dec : float
         Target dec in units of deg.
-    match_radius : float, optional
+    match_radius_optical : float, optional
+        Match radius with CTP catalog (LS10 coordinates) in units of arcsec. Defaults to 3.
+    match_radius_xray : float, optional
         Match radius in units of arcsec. Defaults to 15.
 
     Returns
@@ -300,22 +306,34 @@ def search_catalog(target_ra,target_dec,match_radius=15):
     entry : numpy.ndarray
         The (closest) target entry from eRASS1 MAIN+SUPP catalog. If target is not detected from MAIN+SUPP catalog, will return None instead.
     """
-    with fits.open(main_cat) as hdu:
-        main_data = hdu[1].data
-    with fits.open(supp_cat) as hdu:
-        supp_data = hdu[1].data
-    data = np.append(main_data,supp_data)
-    cat = SkyCoord(data["RA"],data["DEC"],unit="deg",frame="icrs")	# these are all X-ray positions
-    target = SkyCoord([target_ra],[target_dec],unit="deg",frame="icrs")	# these are likely optical positions (from SDSS, for example)
-    results = search_around_sky(target,cat,match_radius*u.arcsec)
+    with fits.open(ctp_cat) as hdu:
+        ctp_data = hdu[1].data
+    ctp_data = ctp_data[ctp_data["bestCTP"]]    # we use the best counterpart to avoid duplicativity
+    cat = SkyCoord(ctp_data["LS10_RA"],ctp_data["LS10_DEC"],unit="deg",frame="icrs")
+    target = SkyCoord([target_ra],[target_dec],unit="deg",frame="icrs")
+    results = search_around_sky(target,cat,match_radius_optical*u.arcsec)
     dist = results[2]
-    if len(dist) > 0:	# detection in eRASS1 MAIN+SUPP catalog
-        # find the closest one
+    if len(dist) > 0:   # recorded in Mara's counterpart catalog
         idx_target = results[1][np.argsort(dist.value)[0]]
-        entry = data[idx_target]
+        entry = ctp_data[idx_target]
         return entry
-    else:	# non-detection in eRASS1 MAIN+SUPP catalog
-        return None
+    else:               # not recorded in Mara's counterpart catalog --> we search MAIN+SUPP
+        with fits.open(main_cat) as hdu:
+            main_data = hdu[1].data
+        with fits.open(supp_cat) as hdu:
+            supp_data = hdu[1].data
+        data = np.append(main_data,supp_data)
+        cat = SkyCoord(data["RA"],data["DEC"],unit="deg",frame="icrs")	# these are all X-ray positions
+        target = SkyCoord([target_ra],[target_dec],unit="deg",frame="icrs")	# these are likely optical positions (from SDSS, for example)
+        results = search_around_sky(target,cat,match_radius_xray*u.arcsec)
+        dist = results[2]
+        if len(dist) > 0:	# detection in eRASS1 MAIN+SUPP catalog
+            # find the closest one
+            idx_target = results[1][np.argsort(dist.value)[0]]
+            entry = data[idx_target]
+            return entry
+        else:	# non-detection in eRASS1 MAIN+SUPP catalog
+            return None
     
 
 def erass_flux(ra_target,dec_target,radius=10*u.arcsec,cat="erass1",band="1"):

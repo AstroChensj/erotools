@@ -27,7 +27,7 @@ class HelpfulParser(argparse.ArgumentParser):
         sys.exit(2)
 
 parser = HelpfulParser(description=__doc__,
-    epilog="""Shi-Jiang Chen, Johannes Buchner and Teng Liu (C) 2024 <JohnnyCsj666@gmail.com>""",
+    epilog="""Shi-Jiang Chen, Johannes Buchner and Teng Liu (C) 2025 <JohnnyCsj666@gmail.com>""",
     formatter_class=argparse.RawDescriptionHelpFormatter)
 
 parser.add_argument("science_evt",type=str,help="the input image/events file")
@@ -36,9 +36,9 @@ parser.add_argument("target_dec",type=float,help="target source DEC (degree, icr
 parser.add_argument("--emin",type=float,default=0.2,help="rest-frame minimum energy [keV]")
 parser.add_argument("--emax",type=float,default=2.3,help="rest-frame maximum energy [keV]")
 parser.add_argument("--target_z",type=float,default=0.,help="target redshift (real photometry extracted from emin/z, emax/z)")
-parser.add_argument("--skip_srcdet",action="store_true",help="skip the source detection (which takes lots of time) and find corresponding files with `detprefix` `detsuffix`")
-parser.add_argument("--detprefix",type=str,default=None,help="prefix for all products under `detdir`")
-parser.add_argument("--detsuffix",type=str,default="",help="suffix for all products under `detdir`")
+parser.add_argument("--detprefix",type=str,default=None,help="`prefix` to be passed to `erosrcdet`")
+parser.add_argument("--detsuffix",type=str,default="",help="`suffix` to be passed to `erosrcdet`")
+parser.add_argument("--skip_exist_srcdet",action="store_true",help="`skip_exist` parameter to be passed to `erosrcdet`")
 parser.add_argument("--prefix",type=str,default="",help="prefix for all products")
 parser.add_argument("--suffix",type=str,default="",help="suffix for all products")
 parser.add_argument("--R_match",type=float,default=15,help="matching radius (arcsec) between target and dr1 catalog (recommend: 15)")
@@ -69,54 +69,40 @@ logger.addHandler(file_handler)
 
 def main():
 
-    if args.skip_srcdet:
-        logger.info("User chose to skip source detection, and provided `detprefix` `detsuffix` for us to find the files:")
+    skytile = tile_local(args.target_ra,args.target_dec)
+    if skytile is None: # not in eRO-DE sky
+        logger.error(f"Target source (RA={args.target_ra}, DEC={args.target_dec}) not in eROSITA:DE sky!")
+        raise
 
-        science_img = f"{args.detprefix}sciimg{args.detsuffix}.fits"
-        expmap = f"{args.detprefix}expmap{args.detsuffix}.fits"
-        detmask = f"{args.detprefix}detmask{args.detsuffix}.fits"
-        boxlist = f"{args.detprefix}fake_boxlist{args.detsuffix}.fits"
-        bkgmap = f"{args.detprefix}bkgmap{args.detsuffix}.fits"
-        cheesemask = f"{args.detprefix}cheesemask{args.detsuffix}.fits"
-        psfmap = f"{args.detprefix}psfmap{args.detsuffix}.fits"
-        mllist = f"{args.detprefix}fake_mllist{args.detsuffix}.fits"
-        srcmap = f"{args.detprefix}srcmap{args.detsuffix}.fits"
+    skip_exist_str = "--skip_exist" if args.skip_exist_srcdet else ""
+    srcdet_cmd = [
+        "erosrcdet",
+        f"{args.science_evt}",
+        "--skytile",f"{str(skytile)}",
+        "--emin","0.2",
+        "--emax","2.3",
+        "--target_z","0",
+        "--prefix",f"{args.detprefix}",
+        "--suffix",f"{args.detsuffix}",
+        skip_exist_str,
+    ]
+    logger.info(" ".join(srcdet_cmd))
+    srcdet_log = f"{log_dir}/{os.path.basename(args.prefix)}srcdet{args.suffix}.log"
+    with open(srcdet_log,"w") as log_file:
+        subprocess.run(srcdet_cmd,stdout=log_file)
 
-        # TODO: check if file exists
-        
-    else:
-        logger.info("User chose to run source detection:")
+    # source detection files (SKYTILE-wise)
+    science_img = f"{args.detprefix}sciimg{args.detsuffix}.fits"
+    expmap = f"{args.detprefix}expmap{args.detsuffix}.fits"
+    detmask = f"{args.detprefix}detmask{args.detsuffix}.fits"
+    boxlist = f"{args.detprefix}fake_boxlist{args.detsuffix}.fits"
+    bkgmap = f"{args.detprefix}bkgmap{args.detsuffix}.fits"
+    cheesemask = f"{args.detprefix}cheesemask{args.detsuffix}.fits"
+    psfmap = f"{args.detprefix}psfmap{args.detsuffix}.fits"
+    mllist = f"{args.detprefix}fake_mllist{args.detsuffix}.fits"
+    srcmap = f"{args.detprefix}srcmap{args.detsuffix}.fits"
 
-        skytile = tile_local(args.target_ra,args.target_dec)
-        if skytile is None: # not in eRO-DE sky
-            logger.error(f"Target source (RA={args.target_ra}, DEC={args.target_dec}) not in eROSITA:DE sky!")
-            raise
-
-        srcdet_cmd = [
-            "erosrcdet",
-            f"{args.science_evt}",
-            "--skytile",f"{str(skytile)}",
-            "--emin","0.2",
-            "--emax","2.3",
-            "--target_z","0",
-            "--prefix",f"{args.prefix}",
-            "--suffix",f"{args.suffix}",
-        ]
-        logger.info(" ".join(srcdet_cmd))
-        srcdet_log = f"{log_dir}/{os.path.basename(args.prefix)}srcdet{args.suffix}.log"
-        with open(srcdet_log,"w") as log_file:
-            subprocess.run(srcdet_cmd,stdout=log_file)
-
-        science_img = f"{args.prefix}sciimg{args.suffix}.fits"
-        expmap = f"{args.prefix}expmap{args.suffix}.fits"
-        detmask = f"{args.prefix}detmask{args.suffix}.fits"
-        boxlist = f"{args.prefix}fake_boxlist{args.suffix}.fits"
-        bkgmap = f"{args.prefix}bkgmap{args.suffix}.fits"
-        cheesemask = f"{args.prefix}cheesemask{args.suffix}.fits"
-        psfmap = f"{args.prefix}psfmap{args.suffix}.fits"
-        mllist = f"{args.prefix}fake_mllist{args.suffix}.fits"
-        srcmap = f"{args.prefix}srcmap{args.suffix}.fits"
-
+    # aperture photometry files (SKYTILE&SRCID-wise)
     apelist = f"{args.prefix}apelist{args.suffix}.fits"
     apelistout = f"{args.prefix}apelistout{args.suffix}.fits"
     apesummary = f"{args.prefix}apesummary{args.suffix}.fits"

@@ -15,7 +15,7 @@ import os
 skymapfilename = os.path.join(os.path.dirname(__file__),"SKYMAPS_052022_MPE.fits")
 
 
-def tile_local(ra,dec,radius=0):
+def tile_local(ra,dec,chatter=0):
     """
     Return the sky tile for a given ra, dec (decimal). Returns only MPE or MPE+IKI skytile.
 
@@ -25,8 +25,8 @@ def tile_local(ra,dec,radius=0):
         Right Ascension in decimal degrees.
     dec : float 
         Declination in decimal degrees.
-    radius : float, optional
-        Search radius in decimal degrees. Default is 0 (point).
+    chatter : int
+        Level of output log. Print output if >0.
 
     Returns
     -------
@@ -35,13 +35,13 @@ def tile_local(ra,dec,radius=0):
 
     # get list of tiles and filter for DE ownership
     with fits.open(skymapfilename) as skyf:
-        d = skyf['SMAPS'].data
-        sky_nr = d['SRVMAP']
-        sky_owner = d['OWNER']
-        sky_ra_min = d['RA_MIN']
-        sky_ra_max = d['RA_MAX']
-        sky_de_min = d['DE_MIN']
-        sky_de_max = d['DE_MAX']
+        d = skyf["SMAPS"].data
+        sky_nr = d["SRVMAP"]
+        sky_owner = d["OWNER"]
+        sky_ra_min = d["RA_MIN"]
+        sky_ra_max = d["RA_MAX"]
+        sky_de_min = d["DE_MIN"]
+        sky_de_max = d["DE_MAX"]
 
     # get index in table for tile
     matches = np.where(
@@ -49,15 +49,17 @@ def tile_local(ra,dec,radius=0):
         (dec >= sky_de_min) & (dec <= sky_de_max))[0]
     if len(matches) != 1:
         for idx in matches: print(sky_nr[idx])
-        # raise RuntimeError('No tile or multiple tiles found')
-        print("No tile or multiple tiles found")
+        # raise RuntimeError("No tile or multiple tiles found")
+        if chatter>0:
+            print("No tile or multiple tiles found")
         return None
     idx = matches[0]
     skytile = f"{sky_nr[idx]:06d}"
-    owner_tile = {0: 'Both', 1: 'IKI', 2: 'MPE'}[sky_owner[idx]]
+    owner_tile = {0: "Both", 1: "IKI", 2: "MPE"}[sky_owner[idx]]
 
     if owner_tile not in ["Both","MPE"]:
-        print("Target source not in eROSITA:DE sky!")
+        if chatter>0:
+            print("Target source not in eROSITA:DE sky!")
         return None
     
     else:
@@ -95,7 +97,7 @@ def tile_api(ra,dec,radius=0):
         if "tiles" in data:
             de_sky = data["tiles"][0]["de_sky"]
             if de_sky:
-                return f"{data['tiles'][0]['srvmap']:06d}"
+                return f"{data["tiles"][0]["srvmap"]:06d}"
             else:
                 print("Target source not in eROSITA:DE sky!")
                 return None

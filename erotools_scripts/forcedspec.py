@@ -13,7 +13,7 @@ Output: SPEC, BKGSPEC, ARF, RMF.
 """
 import numpy as np
 from astropy.io import fits
-from astropy.coordinates import search_around_sky, SkyCoord
+from astropy.coordinates import search_around_sky,SkyCoord
 import astropy.units as u
 import pandas as pd
 import subprocess
@@ -34,18 +34,18 @@ class HelpfulParser(argparse.ArgumentParser):
 		sys.exit(2)
 
 parser = HelpfulParser(description=__doc__,
-	epilog="""Shi-Jiang Chen, Johannes Buchner and Teng Liu (C) 2024 <JohnnyCsj666@gmail.com>""",
+	epilog="""Shi-Jiang Chen, Johannes Buchner and Teng Liu (C) 2025 <JohnnyCsj666@gmail.com>""",
     formatter_class=argparse.RawDescriptionHelpFormatter)
 
 parser.add_argument("science_evt",type=str,help="the input image/events file, from eRASS archive")
 parser.add_argument("target_ra",type=float,help="target source RA [degree, icrs]")
 parser.add_argument("target_dec",type=float,help="target source DEC [degree, icrs]")
-parser.add_argument("--skip_srcdet",action="store_true",help="in case non-detection in eRASS catalog, skip the source detection (which takes lots of time) and find corresponding files with `detprefix` `detsuffix`")
-parser.add_argument("--detprefix",type=str,default=None,help="prefix for all products under `detdir`")
-parser.add_argument("--detsuffix",type=str,default="",help="suffix for all products under `detdir`")
+parser.add_argument("--detprefix",type=str,default=None,help="`prefix` to be passed to `erosrcdet`")
+parser.add_argument("--detsuffix",type=str,default="",help="`suffix` to be passed to `erosrcdet`")
 parser.add_argument("--prefix",type=str,default="./out/forcedspec_",help="prefix for all products, defaults to './out/forcedspec_', will create a directory if necessary")
 parser.add_argument("--suffix",type=str,default="",help="suffix for all products, defaults to ''")
-parser.add_argument("--R_match",type=float,default=15,help="matching radius [arcsec] between target and dr1 catalog, defaults to 15 (recommended)")
+parser.add_argument("--R_match_optical",type=float,default=3,help="matching radius [arcsec] between target and CTP catalog, defaults to 3")
+parser.add_argument("--R_match_xray",type=float,default=15,help="matching radius [arcsec] between target and dr1 catalog, defaults to 15 (recommended)")
 parser.add_argument("--R_confusion",type=float,default=60,help="confusion radius [arcsec], where sources in annulus of R_match ~ R_confusion lead to confusion issues, defaults to 60 (recommended)")
 parser.add_argument("--eRASS_CAT_DIR",type=str,default=None,help="overwrite environmental variable eRASS_CAT_DIR? Defaults to None")
 parser.add_argument("--redshift",type=float,default=0,help="source redshift")
@@ -74,6 +74,37 @@ file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
 
+def run_evtool(science_evt,science_img):
+	"""
+	Run evtool if necessary.
+
+	Parameters
+	----------
+	science_evt : str
+		Input science events file.
+	science_img : str
+		Output science image file.
+
+	Returns
+	-------
+	None
+	"""
+	img_cmd = [
+		"evtool",
+		f"eventfiles={science_evt}",
+		f"outfile={science_img}",
+		"image=yes",
+		"emin=0.2",
+		"emax=2.3",
+	]
+	logger.info(" ".join(img_cmd))
+	mkimg_log = f"{log_dir}/{os.path.basename(args.prefix)}mkimg{args.suffix}.log"
+	with open(mkimg_log,"w") as log_file:
+		subprocess.run(img_cmd,stdout=log_file)
+
+	return
+
+
 def main():
 	t0 = time.time()
 	# check if eRASS_CAT_DIR exists
@@ -91,7 +122,7 @@ def main():
 
 	# check if in eRO:DE sky
 	logger.info("Checking if in eROSITA:DE sky ...")
-	skytile = tile_local(args.target_ra,args.target_dec,radius=0)	# point search
+	skytile = tile_local(args.target_ra,args.target_dec)	# point search
 	if skytile is None: # not in eRO-DE sky
 		logger.error(f"Target source (RA={args.target_ra}, DEC={args.target_dec}) not in eROSITA:DE sky!")
 		raise
@@ -100,6 +131,10 @@ def main():
 	# generate a fake box list (in catprep standards)
 	box_name = f"{outdir}/fake_srclist.fits"
 	science_img = f"{args.detprefix}sciimg{args.detsuffix}.fits"
+	if not os.path.exists(science_img):
+		science_img = f"{args.prefix}sciimg{args.suffix}.fits"
+		if not os.path.exists(science_img):
+			run_evtool(args.science_evt,science_img)
 	logger.info(f"Generating a fake box list ({box_name}) ...")
 	fakesrc_log = f"{log_dir}/{os.path.basename(args.prefix)}fakesrc{args.suffix}.log"
 	with open(fakesrc_log,"w") as log_file:
@@ -114,7 +149,7 @@ def main():
 	logger.info("Updating the boxlist with `AUTO_EXTRACT`, `AUTO_EXCLUDE` ...")
 	# find the closest match from eRASS1 MAIN+SUPP catalog
 	logger.info("Looking for closest match from eRASS1 MAIN+SUPP catalog ...")
-	entry = search_catalog(args.target_ra,args.target_dec,args.R_match)
+	entry = search_catalog(args.target_ra,args.target_dec,args.R_match_optical,args.R_match_xray)
 
 	if entry is not None: # detection
 		id_target = entry["ID_SRC"]
@@ -135,7 +170,6 @@ def main():
 	else:	# non-detection
 		logger.info("Non-detection. Running forced photometry first ...")
 		# TODO: need to modify here!
-		skip_srcdet = "--skip_srcdet" if args.skip_srcdet else ""
 		forcedphot_cmd = [
 			"eroforcedphot",
 			f"{args.science_evt}",
@@ -144,12 +178,12 @@ def main():
 			"--emin", "0.2",
 			"--emax", "2.3",
 			"--target_z", "0.",
-			f"{skip_srcdet}",
 			"--detprefix",f"{args.detprefix}",
 			"--detsuffix",f"{args.detsuffix}",
-			"--prefix",f"{outdir}/forcedphot/",
-			"--suffix","",
-			"--R_match", f"{args.R_match}",
+			"--skip_exist_srcdet",
+			"--prefix",f"{outdir}/forcedphot/{os.path.basename(args.prefix)}",
+			"--suffix",f"{args.suffix}",
+			"--R_match", f"{args.R_match_xray}",
 			"--R_confusion", f"{args.R_confusion}",
 		]
 		logger.info(" ".join(forcedphot_cmd))
@@ -158,7 +192,7 @@ def main():
 			subprocess.run(forcedphot_cmd,stdout=log_file)
 		logger.info("Done. ID_SRC will be 99999. Writing fake `ML_CTS_0`, `ML_BKG_0` ...")
 
-		with fits.open(f"{outdir}/forcedphot/apesummary.fits") as hdu:
+		with fits.open(f"{outdir}/forcedphot/{os.path.basename(args.prefix)}apesummary{args.suffix}.fits") as hdu:
 			forcedphot_data = hdu[1].data
 		ape_eef = forcedphot_data["APE_EEF"]
 		ape_radius = forcedphot_data["APE_RADIUS"] * 4 / 60	# 1 pixel = 4 arcsec; 1 arcsec = 1/60 arcmin
@@ -178,7 +212,7 @@ def main():
 		coord = SkyCoord(ra=args.target_ra*u.degree,dec=args.target_dec*u.degree,frame="icrs")
 		galactic = coord.galactic
 		lii, bii = galactic.l.degree, galactic.b.degree
-		# append a new row to existing box list
+		# append our target source to existing box list
 		with fits.open(box_name,mode="update") as hdu:
 			box_data = hdu[1].data
 			target_row = np.zeros(1,dtype=box_data.dtype)
@@ -243,7 +277,7 @@ def main():
 		f"prefix={args.prefix}",
 		f"suffix={args.suffix}",
 		f"todo=SPEC ARF RMF",	# do not add "" !
-		f"insts=1 2 3 4 6",
+		f"insts=1 2 3 4 6",		# skip TM 5 and 7 for potential light leak
 		f"srcreg=AUTO",
 		f"backreg=AUTO",
 		f"outsrcreg={outsrcreg}",
@@ -257,37 +291,28 @@ def main():
 	with open(srctool_log,"w") as log_file:
 		subprocess.run(srctool_cmd,stdout=log_file)
 
-
-	# # make image (optional)
-	# if args.make_img:
-	# 	science_img = f"{img_dir}/{os.path.basename(args.prefix)}image{args.suffix}.fits"
-	# 	logger.info(f"Making image ({science_img}) ...")
-	# 	img_cmd = [
-	# 		"evtool",
-	# 		f"eventfiles={args.science_evt}",
-	# 		f"outfile={science_img}",
-	# 		"image=yes",
-	# 		"emin=0.2",
-	# 		"emax=2.3",
-	# 	]
-	# 	logger.info(" ".join(img_cmd))
-	# 	mkimg_log = f"{log_dir}/{os.path.basename(args.prefix)}mkimg{args.suffix}.log"
-	# 	with open(mkimg_log,"w") as log_file:
-	# 		subprocess.run(img_cmd,stdout=log_file)
-
 		
 	# make redshift file (optional)
 	if args.record_redshift:
-		zfile = f"{args.prefix}020_SourceSpec_{id_target:05d}.fits.z"
+		zfile = f"{args.prefix}020_SourceSpec_{id_target:05d}{args.suffix}.fits.z"
 		with open(zfile,"w") as f:
 			f.writelines(f"{args.redshift}")
 
 
 	# make nh file (optional)
 	if args.record_galnh:
-		nhfile = f"{args.prefix}020_SourceSpec_{id_target:05d}.fits.nh"
+		nhfile = f"{args.prefix}020_SourceSpec_{id_target:05d}{args.suffix}.fits.nh"
 		with open(nhfile,"w") as f:
 			f.writelines(f"{args.galnh}")
+
+
+	# make a link to science image (for later visual check)
+	link_name = f"{args.prefix}sciimg{args.suffix}.fits"
+	try:
+		os.symlink(science_img,link_name)
+	except FileExistsError:
+		os.remove(link_name)
+		os.symlink(science_img,link_name)
 
 
 	t1 = time.time()
