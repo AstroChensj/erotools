@@ -97,7 +97,7 @@ def tile_api(ra,dec,radius=0):
         if "tiles" in data:
             de_sky = data["tiles"][0]["de_sky"]
             if de_sky:
-                return f"{data["tiles"][0]["srvmap"]:06d}"
+                return f'{data["tiles"][0]["srvmap"]:06d}'
             else:
                 print("Target source not in eROSITA:DE sky!")
                 return None

@@ -24,7 +24,7 @@ main_cat_5 = f"{eRASS_CAT_DIR}/all_s4_s5_SourceCat1B_c030_240905_poscorr_mpe_pho
 #############################################
 def fake_srclist(skytile,outname,science_img,style="box"):
     """
-    Generte a `boxlist` for all detected sources in a given skytile.
+    Generte a `boxlist` for all detected sources (DET_LIKE_0>5) in a given skytile.
 
     Parameters
     ----------
@@ -233,18 +233,19 @@ def look_for_confusion(target_ra,target_dec,R_match=15*u.arcsec,R_confusion=60*u
     n_confusion = len(idx_out) - len(idx_in)
 
     if n_match == 1:
-        print("There is 1 matched source within a matching radius of %s."%(R_match))
+        print(f"There is 1 matched source within a matching radius of {R_match}.")
     elif n_match == 0:
         print("Target source is not detected in eRASS1 Main+Supp catalog. It could be very faint (det_like_0<5).")
     else:
-        print("There are multiple sources matched within a matching radius of %s. Does your target source lie within a dense region (e.g., cluster)?")
-        # TODO: how to deal with this situation?
+        print(f"There are multiple sources matched within a matching radius of {R_match}. Does your target source lie within a dense region (e.g., cluster)?")
+        # TODO: how to deal with this situation? 
+        # cleaning steps for the catalog needed before forced photometry?
 
     if n_confusion > 0:
-        print("But there is (are) %d confusion source(s) in the annulus of %s ~ %s around target source."%(n_confusion,R_match,R_confusion))
+        print(f"But there is (are) {n_confusion} confusion source(s) in the annulus of {R_match} ~ {R_confusion} around target source.")
         print("eROSITA's FoV-averaged HEW is ~30 arcsec. Since there is (are) nearby source(s) around target position, the target source extraction region can be contaminated by it (them). Need to generate source map to exclude the contamination(s).")  
     else:
-        print("There are no nearby sources in the annulus of %s ~ %s. The source extraction should be safe."%(R_match,R_confusion))
+        print(f"There are no nearby sources in the annulus of {R_match} ~ {R_confusion}. The source extraction should be safe.")
 
     return n_confusion
 

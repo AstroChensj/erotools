@@ -169,6 +169,7 @@ def main():
 
 
     # generate BKGMAP
+    # this assumes all but DET_LIKE_0>5 events (sources) arising from BKG
     if (not os.path.exists(bkgmap)) or (not os.path.exists(cheesemask)) or (not args.skip_exist):
         logger.info("###############################################################")
         logger.info("################## Generating background map ##################")

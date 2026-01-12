@@ -24,7 +24,11 @@ You would also need the eRASS1 source catalog (both MAIN and SUPP) for forced sp
 
 Move the two catalogs under your favorite folder, whose name should be stored as an environmental variable (`eRASS_CAT_DIR`):
 ```shell
-mv eRASS1_Main.tar.gz eRASS1_Supp.tar.gz /path/to/your/catalogs
+gzip -d eRASS1_Main.tar.gz
+tar -xf eRASS1_Main.tar
+gzip -d eRASS1_Supp.tar.gz
+tar -xf eRASS1_Supp.tar
+mv eRASS1_Main.v1.1.fits eRASS1_Supp.v1.1.fits /path/to/your/catalogs
 export eRASS_CAT_DIR=/path/to/your/catalogs
 ```
 
